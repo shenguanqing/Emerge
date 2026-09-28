@@ -12,3 +12,7 @@
 node_modules/
 dist/
 *.local
+
+# Rust / Tauri
+src-tauri/target/
+app-icon.png

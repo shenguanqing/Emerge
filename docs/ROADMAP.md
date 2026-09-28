@@ -1,6 +1,6 @@
 # 开发路线
 
-当前进度：Phase 1–7 已完成并通过验证（见 [reports/](reports/)）；Phase 8 进行中。按阶段交付可运行结果，阶段检查通过后推进。下表是计划，不是已有功能清单。
+当前进度：Phase 1–7 已完成并通过验证；Phase 8 部分通过（macOS 桌面窗口可运行，透明合成受 WKWebView 层限制，见 [reports/phase-8.md](reports/phase-8.md)）；Phase 9 进行中。
 
 | 阶段 | 交付范围 | 完成条件 |
 | --- | --- | --- |
@@ -11,6 +11,7 @@
 | Phase 5 Pointer Force Field（✅ 已完成） | 指针坐标、速度、靠近感知、反应延迟与冲击 | 慢速靠近与高速划过有可辨差异 |
 | Phase 6 驱散与重新聚合（✅ 已完成） | 核心保留、旋涡式回归与拖尾 | 目标 2–4 秒自然重组，无位置瞬移 |
 | Phase 7 Behavior / Emotion（✅ 已完成） | 自主 Idle，Curious / Scared / Calm，连续参数 | 平滑转换，受惊后短期安全距离增加，无需用户输入仍有生命感 |
+| Phase 8 透明桌面窗口（⚠️ 部分通过） | Tauri 2，macOS / Windows 透明无边框，基础交互与退出入口 | macOS：窗口/置顶/交互/退出 ✅，透明合成 ⚠️（WKWebView 层限制，诊断与 workaround 已记录）；Windows：未验证 |
 | Phase 2 GPU Particle Simulation | GPU 位置/速度更新，双缓冲、时间步、资源释放与后备路径 | 至少 20k 粒子稳定模拟；两种后端分别验证或明确阻塞 |
 | Phase 3 基础形态 | Core / Body / Aura、呼吸、启动凝聚 | 三层可辨，有有机轮廓；不呈现普通发光球 |
 | Phase 4 Flow Field / Curl Noise | 相关流动、局部扰动与阻尼 | 长时间运动不散架，避免固定循环与随机乱飞 |

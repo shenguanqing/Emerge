@@ -28,6 +28,7 @@ let backend: Backend | null = null;
 let pointer: PointerSystem | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let rafId = 0;
+let beaconTimer = 0;
 let lastTime = 0;
 let fpsWindow = 0;
 let fpsFrames = 0;
@@ -46,6 +47,40 @@ function resize(): void {
 onMounted(async () => {
   const canvas = canvasRef.value;
   if (!canvas) return;
+
+  // 桌面透明模式：Tauri 窗口内无黑底，生命体直接漂浮在桌面上。
+  const isDesktop = '__TAURI_INTERNALS__' in window;
+  document.documentElement.classList.toggle('desktop-transparent', isDesktop);
+
+  // 桌面诊断信标：把运行状态周期性上报给本地监听器（仅桌面模式）。
+  if (isDesktop) {
+    const emit = () => {
+      try {
+        fetch('http://127.0.0.1:41999/beacon', {
+          method: 'POST',
+          body: JSON.stringify({
+            diag: { ...diag },
+            errors: (window as typeof window & { __emergeErrors?: string[] }).__emergeErrors?.slice(-3) ?? [],
+            win: {
+              x: window.screenX,
+              y: window.screenY,
+              w: window.outerWidth,
+              h: window.outerHeight,
+              screen: `${window.screen.width}x${window.screen.height}`,
+            },
+            css: {
+              htmlClass: document.documentElement.className,
+              bodyBg: getComputedStyle(document.body).backgroundColor,
+              htmlBg: getComputedStyle(document.documentElement).backgroundColor,
+              canvases: document.querySelectorAll('canvas').length,
+            },
+          }),
+        }).catch(() => {});
+      } catch {}
+    };
+    beaconTimer = window.setInterval(emit, 2000);
+    void emit;
+  }
 
   const caps = await probeCapabilities();
 
@@ -71,7 +106,7 @@ onMounted(async () => {
       if (!active) diag.note = 'WebGPU 初始化失败，尝试回退 WebGL2';
     }
     if (!active && (backendId === 'webgl2' || backendId === 'none') && caps.webgl2.available) {
-      active = new WebGL2Backend(canvas, DEFAULT_LIFE_PARAMS, DEFAULT_SIMULATION_PARAMS);
+      active = new WebGL2Backend(canvas, DEFAULT_LIFE_PARAMS, DEFAULT_SIMULATION_PARAMS, isDesktop);
     }
   } catch (err) {
     diag.backend = '初始化失败';
@@ -131,6 +166,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId);
+  if (beaconTimer) clearInterval(beaconTimer);
   resizeObserver?.disconnect();
   pointer?.dispose();
   backend?.dispose();
@@ -168,6 +204,11 @@ body,
 .stage {
   position: fixed;
   inset: 0;
+}
+/* 桌面透明模式：页面与画布均无底色 */
+html.desktop-transparent,
+html.desktop-transparent body {
+  background: transparent;
 }
 .stage-canvas {
   display: block;

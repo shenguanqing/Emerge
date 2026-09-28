@@ -290,20 +290,38 @@ export class WebGL2Backend {
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: THREE.ShaderMaterial;
   private readonly points: THREE.Points;
+  private overlay: HTMLCanvasElement | null = null;
+  private overlayCtx: CanvasRenderingContext2D | null = null;
   private disposed = false;
 
   constructor(
     canvas: HTMLCanvasElement,
     private readonly params: LifeParams,
     private readonly sim: SimulationParams,
+    transparent = false,
   ) {
+    // 桌面透明模式：WKWebView 的 WebGL 层不参与页面透明合成（黑底），
+    // 需经 2D 画布中转：GL 画布保留绘图缓冲，逐帧 drawImage 到透明 2D 画布。
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: false,
-      alpha: false,
+      alpha: transparent,
+      preserveDrawingBuffer: transparent,
       powerPreference: 'high-performance',
     });
-    this.renderer.setClearColor(0x000000, 1);
+    this.renderer.setClearColor(0x000000, transparent ? 0 : 1);
+    if (transparent) {
+      canvas.style.display = 'none';
+      const overlay = document.createElement('canvas');
+      overlay.style.position = 'absolute';
+      overlay.style.inset = '0';
+      overlay.style.width = '100%';
+      overlay.style.height = '100%';
+      overlay.style.display = 'block';
+      canvas.parentElement?.appendChild(overlay);
+      this.overlay = overlay;
+      this.overlayCtx = overlay.getContext('2d');
+    }
     this.camera.position.set(0, 0, 7);
     this.particleCount = params.particleCount;
     this.simH = Math.ceil(params.particleCount / SIM_W);
@@ -442,6 +460,11 @@ export class WebGL2Backend {
     this.gpu.compute();
     m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
     this.renderer.render(this.scene, this.camera);
+    if (this.overlayCtx && this.overlay) {
+      // GL 画布 → 2D 画布：保留 alpha 的页面合成路径（WebKit 限制的规避）。
+      this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+      this.overlayCtx.drawImage(this.renderer.domElement, 0, 0, this.overlay.width, this.overlay.height);
+    }
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -450,11 +473,19 @@ export class WebGL2Backend {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.material.uniforms.uPixelRatio.value = dpr;
+    if (this.overlay) {
+      this.overlay.width = Math.max(1, Math.floor(width * dpr));
+      this.overlay.height = Math.max(1, Math.floor(height * dpr));
+    }
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.overlay?.remove();
+    this.overlay = null;
+    this.overlayCtx = null;
+    this.renderer.domElement.style.visibility = '';
     this.scene.remove(this.points);
     this.geometry.dispose();
     this.material.dispose();

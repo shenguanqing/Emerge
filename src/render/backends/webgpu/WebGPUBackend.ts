@@ -327,6 +327,7 @@ export class WebGPUBackend {
   private readonly renderData = new Float32Array(28);
   private readonly simData = new Float32Array(56);
   private readonly pointSize: number;
+  private clearAlpha = 1;
   private readIdx = 0;
   private disposed = false;
 
@@ -430,6 +431,7 @@ export class WebGPUBackend {
     canvas: HTMLCanvasElement,
     params: LifeParams,
     sim: SimulationParams,
+    transparent = false,
   ): Promise<WebGPUBackend | null> {
     try {
       if (!navigator.gpu) return null;
@@ -439,8 +441,14 @@ export class WebGPUBackend {
       const context = canvas.getContext('webgpu');
       if (!context) return null;
       const format = navigator.gpu.getPreferredCanvasFormat();
-      context.configure({ device, format, alphaMode: 'opaque' });
-      return new WebGPUBackend(device, context, format, canvas, params, sim);
+      context.configure({
+        device,
+        format,
+        alphaMode: transparent ? 'premultiplied' : 'opaque',
+      });
+      const backend = new WebGPUBackend(device, context, format, canvas, params, sim);
+      backend.clearAlpha = transparent ? 0 : 1;
+      return backend;
     } catch {
       return null;
     }
@@ -518,7 +526,7 @@ export class WebGPUBackend {
       colorAttachments: [
         {
           view,
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: { r: 0, g: 0, b: 0, a: this.clearAlpha },
           loadOp: 'clear',
           storeOp: 'store',
         },
