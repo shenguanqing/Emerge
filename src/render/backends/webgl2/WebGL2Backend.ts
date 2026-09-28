@@ -30,6 +30,13 @@ uniform float uCurlFreq;
 uniform float uCurlSpeed;
 uniform float uBodyBase;
 uniform float uSwirlBase;
+uniform vec3 uPointerPos;
+uniform vec3 uPointerVel;
+uniform float uPointerActive;
+uniform float uPointerRadius;
+uniform float uPointerPush;
+uniform float uImpactSpeed;
+uniform float uImpactPush;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -159,6 +166,19 @@ void main() {
   vec3 flowPos = p * uCurlFreq + vec3(0.0, 0.0, uTime * uCurlSpeed);
   float curlMul = layer < 0.5 ? 0.3 : (layer < 1.5 ? 1.0 : 1.5);
   force += curlNoise(flowPos) * (uCurlStrength * curlMul);
+
+  // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
+  // 指针读数已经过感知延迟，此处只做纯力响应。
+  if (uPointerActive > 0.01) {
+    vec3 toP = uPointerPos - p;
+    float dP = length(toP) + 1e-4;
+    float influence = smoothstep(uPointerRadius, 0.0, dP);
+    vec3 away = -toP / dP;
+    float speed = length(uPointerVel);
+    float impact = smoothstep(uImpactSpeed, uImpactSpeed * 2.5, speed) * influence;
+    force += away * (influence * uPointerPush + impact * uImpactPush * 3.0);
+    force += uPointerVel * impact * 0.9;
+  }
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   vec3 nv = (v + force * uDt) * exp(-uDamping * uDt);
@@ -310,6 +330,13 @@ export class WebGL2Backend {
       uCurlSpeed: { value: this.sim.curlSpeed },
       uBodyBase: { value: this.sim.bodyBase },
       uSwirlBase: { value: this.sim.swirlBase },
+      uPointerPos: { value: new THREE.Vector3(0, 0, 99) },
+      uPointerVel: { value: new THREE.Vector3() },
+      uPointerActive: { value: 0 },
+      uPointerRadius: { value: this.sim.pointerRadius },
+      uPointerPush: { value: this.sim.pointerPush },
+      uImpactSpeed: { value: this.sim.impactSpeed },
+      uImpactPush: { value: this.sim.impactPush },
     };
     Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
     Object.assign(this.velVar.material.uniforms, shared);
@@ -369,6 +396,17 @@ export class WebGL2Backend {
       state.corePosition[1],
       state.corePosition[2],
     );
+    (u.uPointerPos.value as THREE.Vector3).set(
+      state.pointerPos[0],
+      state.pointerPos[1],
+      state.pointerPos[2],
+    );
+    (u.uPointerVel.value as THREE.Vector3).set(
+      state.pointerVel[0],
+      state.pointerVel[1],
+      state.pointerVel[2],
+    );
+    u.uPointerActive.value = state.pointerActive;
     this.posVar.material.uniforms.uDt.value = dt;
 
     const m = this.material.uniforms;

@@ -15,6 +15,9 @@ struct Sim {
   data3: vec4f,          // count, pad, pad, pad
   data4: vec4f,          // formMix, breathWave, revealT, revealSeconds
   data5: vec4f,          // bodyBase, swirlBase, pad, pad
+  pointerPos_act: vec4f, // pointer.xyz, active(0..1)
+  pointerVel_pad: vec4f, // pointerVel.xyz, pad
+  data6: vec4f,          // pointerRadius, pointerPush, impactSpeed, impactPush
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -176,6 +179,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   if (layer > 0.5 && layer < 1.5) { curlMul = 1.0; }
   force = force + curlNoise(flowPos) * (curlStrength * curlMul);
 
+  // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
+  if (sim.pointerPos_act.w > 0.01) {
+    let toP = sim.pointerPos_act.xyz - p;
+    let dP = length(toP) + 1e-4;
+    let influence = smoothstep(sim.data6.x, 0.0, dP);
+    let away = -toP / dP;
+    let speed = length(sim.pointerVel_pad.xyz);
+    let impact = smoothstep(sim.data6.z, sim.data6.z * 2.5, speed) * influence;
+    force = force + away * (influence * sim.data6.y + impact * sim.data6.w * 3.0);
+    force = force + sim.pointerVel_pad.xyz * impact * 0.9;
+  }
+
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   v = (v + force * dt) * exp(-damping * dt);
   let np = p + v * dt;
@@ -299,7 +314,7 @@ export class WebGPUBackend {
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
   /** [0..15] VP 矩阵；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds。 */
   private readonly renderData = new Float32Array(24);
-  private readonly simData = new Float32Array(24);
+  private readonly simData = new Float32Array(44);
   private readonly pointSize: number;
   private readIdx = 0;
   private disposed = false;
@@ -332,7 +347,7 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 96,
+      size: 176,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
@@ -452,6 +467,17 @@ export class WebGPUBackend {
     this.simData[17] = state.breathWave;
     this.simData[20] = this.sim.bodyBase;
     this.simData[21] = this.sim.swirlBase;
+    this.simData[24] = state.pointerPos[0];
+    this.simData[25] = state.pointerPos[1];
+    this.simData[26] = state.pointerPos[2];
+    this.simData[27] = state.pointerActive;
+    this.simData[28] = state.pointerVel[0];
+    this.simData[29] = state.pointerVel[1];
+    this.simData[30] = state.pointerVel[2];
+    this.simData[32] = this.sim.pointerRadius;
+    this.simData[33] = this.sim.pointerPush;
+    this.simData[34] = this.sim.impactSpeed;
+    this.simData[35] = this.sim.impactPush;
     d.queue.writeBuffer(this.simUniform, 0, this.simData);
 
     this.renderData[20] = state.formMix;

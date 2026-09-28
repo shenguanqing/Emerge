@@ -1,4 +1,5 @@
 import { createLifeState, type LifeParams, type LifeState } from './types';
+import { PointerPerception, type PointerReading } from './PointerPerception';
 
 /**
  * 生命引擎：唯一持有模拟时钟与生命状态。
@@ -7,9 +8,20 @@ import { createLifeState, type LifeParams, type LifeState } from './types';
  */
 export class LifeEngine {
   private readonly state: LifeState;
+  private readonly perception = new PointerPerception();
+  private pointerReading: PointerReading = {
+    active: false,
+    world: [0, 0, 99],
+    worldVel: [0, 0, 0],
+  };
 
   constructor(private readonly params: LifeParams) {
     this.state = createLifeState();
+  }
+
+  /** 提供最新原始指针读数；感知延迟在 update 内平滑。 */
+  setPointer(reading: PointerReading): void {
+    this.pointerReading = reading;
   }
 
   /** 只读状态快照，供渲染层消费。 */
@@ -22,6 +34,13 @@ export class LifeEngine {
     const dt = Math.min(Math.max(dtSeconds, 0), 0.1);
     this.state.time += dt;
     this.state.revealT += dt;
+
+    // 指针感知：指数滞后产生反应延迟（tau 见 PointerPerception）。
+    this.perception.update(this.pointerReading, dt);
+    const perceived = this.perception.perceived;
+    this.state.pointerPos = perceived.world;
+    this.state.pointerVel = perceived.worldVel;
+    this.state.pointerActive = this.perception.activityLevel;
 
     // 呼吸：相位连续累积，缩放 = 1 + amplitude · (0.5 − 0.5·cos 2π·rate·t)，
     // 平滑经过 1 → 1+amp → 1，无硬切换。

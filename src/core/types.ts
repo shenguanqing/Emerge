@@ -58,6 +58,14 @@ export interface SimulationParams {
   bodyBase: number;
   /** 凝聚期旋涡切向力基准强度（随 formMix 衰减到 0）。 */
   swirlBase: number;
+  /** 指针影响半径（世界单位）。 */
+  pointerRadius: number;
+  /** 指针基础排斥强度（生命体感知到的「物理存在」）。 */
+  pointerPush: number;
+  /** 冲击速度阈值（世界单位/秒），超过即产生冲击波。 */
+  impactSpeed: number;
+  /** 冲击波强度。 */
+  impactPush: number;
 }
 
 export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
@@ -69,6 +77,10 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
   curlSpeed: 0.06,
   bodyBase: 1.35,
   swirlBase: 2.6,
+  pointerRadius: 2.6,
+  pointerPush: 1.8,
+  impactSpeed: 2.0,
+  impactPush: 9.0,
 };
 
 /** 生命引擎每帧输出的只读快照；渲染层只消费，不回写。 */
@@ -87,6 +99,12 @@ export interface LifeState {
   formMix: number;
   /** 启动以来经过的秒数，驱动粒子逐个显现。 */
   revealT: number;
+  /** 感知到的指针位置（世界坐标，含反应延迟）。 */
+  pointerPos: [number, number, number];
+  /** 感知到的指针速度（世界单位/秒）。 */
+  pointerVel: [number, number, number];
+  /** 指针感知活跃度 0..1。 */
+  pointerActive: number;
 }
 
 export function createLifeState(): LifeState {
@@ -98,5 +116,8 @@ export function createLifeState(): LifeState {
     corePosition: [0, 0, 0],
     formMix: 0,
     revealT: 0,
+    pointerPos: [0, 0, 99],
+    pointerVel: [0, 0, 0],
+    pointerActive: 0,
   };
 }

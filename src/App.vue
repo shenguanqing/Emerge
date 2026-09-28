@@ -38,6 +38,7 @@ function resize(): void {
   const h = canvas.clientHeight || window.innerHeight;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   backend.resize(w, h, dpr);
+  if (pointer) pointer.setViewport(w, h);
   diag.dpr = dpr;
 }
 
@@ -93,6 +94,8 @@ onMounted(async () => {
 
   const lifeEngine = engine;
   const activeBackend = backend;
+  const inputPointer = pointer;
+  (window as typeof window & { __emergeEngine?: LifeEngine }).__emergeEngine = lifeEngine;
 
   resize();
   resizeObserver = new ResizeObserver(resize);
@@ -113,6 +116,7 @@ onMounted(async () => {
       fpsFrames = 0;
     }
 
+    lifeEngine.setPointer(inputPointer.getReading());
     lifeEngine.update(dt);
     activeBackend.frame(lifeEngine.getState(), dt);
   };
