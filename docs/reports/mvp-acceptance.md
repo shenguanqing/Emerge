@@ -39,9 +39,20 @@
 - 成立的：凝聚仪式感强；「它发现了我」「它在躲我」「它记仇」（连续受惊后收缩阈值明显降低）的反馈链完整；Ultra 档的形体丰富度值得升档；闲置时它仍在缓慢变化，不像屏保。
 - 显机械的：平静期核心漂移是平滑 Lissajous 轨迹，长时间盯着可辨识规律（自发脉冲有缓解但轨迹本身可预测）；连续快速惊吓时「收缩」与「驱散」表现会叠加，区分度下降。两项均为 Phase 10/打磨项。
 
-**真人体验占位**：待用户实际运行 5 分钟后填写主观判断（是否愿意继续玩 / 是否感到它在回应 / 哪些片段廉价或机械），并删除本行。
+**真人体验回填模板**（运行方式见下方说明，填写后删除本提示行）：
 
-**Windows（WebView2）验证**：本会话环境无 Windows 机器，未执行。步骤：Windows 上 `npm install && npm run app:build`，运行 `src-tauri/target/debug/emerge.exe`，确认 ① 窗口背景透明（无黑底）② 交互正常 ③ 记录后端（WebView2 的 WebGPU/WebGL2）与 FPS——结果更新至本文件。WebView2 不受 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)（WKWebView 基底缺陷）影响，预期透明可用。
+```
+体验者：________    日期：________    运行方式：Web / 桌面应用
+1. 五分钟后你是否愿意继续玩下去？        是 / 否 —— 为什么：________
+2. 你是否感受到「它发现了我」？          是 / 否 —— 在哪个瞬间：________
+3. 你是否感受到「它在躲我 / 它记仇」？   是 / 否 —— 在哪个瞬间：________
+4. 哪些片段显得机械、廉价或出戏？        ________
+5. 总评（一句话）：________
+```
+
+**运行方式**：`npm run dev`（浏览器打开 http://localhost:5173），或 `npm run app:build` 后运行 `src-tauri/target/debug/emerge`（macOS 桌面浮窗）。
+
+**Windows（WebView2）验证——保留待办**：本会话环境无 Windows 机器，该验证无法执行。待办步骤：Windows 上 `npm install && npm run app:build`，运行 `src-tauri/target/debug/emerge.exe`，确认 ① 窗口背景透明（无黑底）② 交互正常 ③ 记录后端（WebView2 的 WebGPU/WebGL2）与 FPS——结果更新至本文件并删除本条。WebView2 不受 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)（WKWebView 基底缺陷）影响，预期透明可用。
 
 ## 结论
 
