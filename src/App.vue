@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { DEFAULT_LIFE_PARAMS } from './core/types';
+import {
+  DEFAULT_LIFE_PARAMS,
+  DEFAULT_SIMULATION_PARAMS,
+} from './core/types';
 import { LifeEngine } from './core/LifeEngine';
-import { WebGL2Backend } from './render/backends/WebGL2Backend';
+import { WebGL2Backend } from './render/backends/webgl2/WebGL2Backend';
+import { WebGPUBackend } from './render/backends/webgpu/WebGPUBackend';
 import { probeCapabilities } from './render/capability';
 import { PointerSystem } from './input/PointerSystem';
 import Diagnostics from './ui/Diagnostics.vue';
@@ -16,8 +20,10 @@ const diag = reactive({
   dpr: 1,
 });
 
+type Backend = WebGL2Backend | WebGPUBackend;
+
 let engine: LifeEngine | null = null;
-let backend: WebGL2Backend | null = null;
+let backend: Backend | null = null;
 let pointer: PointerSystem | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let rafId = 0;
@@ -40,21 +46,53 @@ onMounted(async () => {
   if (!canvas) return;
 
   const caps = await probeCapabilities();
-  diag.backend = caps.chosen === 'webgl2' ? 'WebGL2' : caps.chosen;
-  diag.note = caps.note;
+
+  // ?backend=webgpu|webgl2 可强制指定（用于分别验证两种后端）。
+  const override = new URLSearchParams(window.location.search).get('backend');
+  let backendId: 'webgpu' | 'webgl2' | 'none' = 'none';
+  if (override === 'webgpu' || override === 'webgl2') {
+    backendId = override;
+  } else if (caps.webgpu.available) {
+    backendId = 'webgpu';
+  } else if (caps.webgl2.available) {
+    backendId = 'webgl2';
+  }
 
   engine = new LifeEngine(DEFAULT_LIFE_PARAMS);
   pointer = new PointerSystem();
   pointer.attach(canvas);
 
-  if (caps.chosen !== 'webgl2') {
-    diag.note = `${caps.note}（当前仅显示诊断信息）`;
+  let active: Backend | null = null;
+  try {
+    if (backendId === 'webgpu') {
+      active = await WebGPUBackend.create(canvas, DEFAULT_LIFE_PARAMS, DEFAULT_SIMULATION_PARAMS);
+      if (!active) diag.note = 'WebGPU 初始化失败，尝试回退 WebGL2';
+    }
+    if (!active && (backendId === 'webgl2' || backendId === 'none') && caps.webgl2.available) {
+      active = new WebGL2Backend(canvas, DEFAULT_LIFE_PARAMS, DEFAULT_SIMULATION_PARAMS);
+    }
+  } catch (err) {
+    diag.backend = '初始化失败';
+    diag.note = String(err);
     return;
   }
 
+  if (!active) {
+    diag.backend = '无可用后端';
+    diag.note = 'WebGPU 与 WebGL2 均不可用，无法渲染';
+    return;
+  }
+  backend = active;
+  (window as typeof window & { __emergeBackend?: Backend }).__emergeBackend = backend;
+  diag.backend = backend.id === 'webgpu' ? 'WebGPU Compute' : 'WebGL2 GPGPU';
+  if (!diag.note) {
+    diag.note = override
+      ? `强制后端 ${backend.id}；${caps.webgpu.adapter ?? ''}`
+      : `WebGPU: ${caps.webgpu.adapter ?? '不可用'}`;
+  }
+
   const lifeEngine = engine;
-  const renderer = new WebGL2Backend(canvas, DEFAULT_LIFE_PARAMS);
-  backend = renderer;
+  const activeBackend = backend;
 
   resize();
   resizeObserver = new ResizeObserver(resize);
@@ -63,7 +101,7 @@ onMounted(async () => {
   lastTime = performance.now();
   const loop = (now: number) => {
     rafId = requestAnimationFrame(loop);
-    const dt = (now - lastTime) / 1000;
+    const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
 
     // FPS：0.5s 滑动窗口平均。
@@ -76,7 +114,7 @@ onMounted(async () => {
     }
 
     lifeEngine.update(dt);
-    renderer.render(lifeEngine.getState());
+    activeBackend.frame(lifeEngine.getState(), dt);
   };
   rafId = requestAnimationFrame(loop);
 });

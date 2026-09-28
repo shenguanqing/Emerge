@@ -14,5 +14,7 @@
 - 建立 Phase 1 工程：Vue 3 + TypeScript + Vite，core / render / input 分层与 GPU 能力探测。
 - 提供 WebGL2 点云渲染 Prototype（呼吸与核心漂移）及后端/帧率诊断；挂载、缩放、卸载与资源释放验证通过。
 - 新增 docs/reports/phase-1.md 交付记录，更新 README 运行方式。
+- Phase 2：新增 WebGPU Compute 与 WebGL2 GPGPU 双模拟后端（32,768 粒子 @ 120 FPS），力场参数语义共享，`?backend=` 强制覆盖与失败回退。
+- 新增 docs/reports/phase-2.md，记录 ANGLE 下 GLSL3 点材质病理性问题及规避方式。
 
 以上为文档初始化，尚未包含应用实现或性能测试结果。

@@ -6,7 +6,7 @@
 
 /** 生命体连续可调参数（Phase 7 起由 EmotionEngine 驱动，Phase 1 提供初始值）。 */
 export interface LifeParams {
-  /** 粒子总数。Phase 1 原型取 8192 验证链路，Phase 2 提升至 20k–100k。 */
+  /** 粒子总数。MVP 20k–100k；Phase 2 起 32,768 起。 */
   particleCount: number;
   /** 呼吸幅度：核心尺度 1 → 1 + breathAmplitude → 1。 */
   breathAmplitude: number;
@@ -21,12 +21,39 @@ export interface LifeParams {
 }
 
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
-  particleCount: 8192,
+  particleCount: 32768,
   breathAmplitude: 0.08,
   breathRate: 0.2,
   driftSpeed: 0.22,
   driftRadius: 0.35,
   pointSize: 3.0,
+};
+
+/**
+ * 模拟力场参数：WebGPU 与 WebGL2 两个后端共享同一份语义与数值，
+ * 力的定义在各自 shader 中保持一致。
+ */
+export interface SimulationParams {
+  /** 锚点弹簧刚度：粒子被拉向「核心 + 个体锚点」的目标位。 */
+  shellStiffness: number;
+  /** 核心长程吸引（1/dist 衰减）。 */
+  coreGravity: number;
+  /** 指数速度阻尼（v *= exp(-damping·dt)）。 */
+  damping: number;
+  /** 湍流幅度（Phase 2 为三角函数近似，Phase 4 换成 Curl Noise）。 */
+  turbulenceAmp: number;
+  /** 个体锚点半径范围（世界单位），Phase 3 改为有机形体采样。 */
+  radiusMin: number;
+  radiusMax: number;
+}
+
+export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
+  shellStiffness: 2.2,
+  coreGravity: 0.18,
+  damping: 1.6,
+  turbulenceAmp: 0.35,
+  radiusMin: 1.25,
+  radiusMax: 2.2,
 };
 
 /** 生命引擎每帧输出的只读快照；渲染层只消费，不回写。 */
