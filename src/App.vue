@@ -149,6 +149,9 @@ onMounted(async () => {
   const inputPointer = pointer;
   (window as typeof window & { __emergeEngine?: LifeEngine }).__emergeEngine = lifeEngine;
   (window as typeof window & { __emergeQuality?: QualityManager }).__emergeQuality = quality;
+  if (backend instanceof WebGL2Backend) {
+    (window as typeof window & { __emergeBackendRef?: WebGL2Backend }).__emergeBackendRef = backend;
+  }
 
   resize();
   resizeObserver = new ResizeObserver(resize);

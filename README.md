@@ -8,29 +8,35 @@
 
 ## 当前状态
 
-Phase 1（架构与渲染 Prototype）已完成并通过验证，详见 [docs/reports/phase-1.md](docs/reports/phase-1.md)；Phase 2（GPU 粒子模拟）进行中。
+**MVP（Phase 1–9）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度。分阶段验证记录见 [docs/reports/](docs/reports/)。
 
 ```bash
 npm install
-npm run dev        # 开发服务器
+npm run dev        # Web 开发服务器（http://localhost:5173）
 npm run build      # 类型检查 + 生产构建
 npm run preview    # 预览构建产物
+npm run app:build  # Tauri 桌面应用（debug，构建后运行 src-tauri/target/debug/emerge）
+npm run app:dev    # Tauri 开发模式
 ```
 
-项目名为 Emerge，产品方向为 Particle Life / 粒子生命体。首阶段面向 macOS、Windows 和 Web；iOS / Android 为后续扩展方向。
+Web 端可用 `?backend=webgpu|webgl2` 强制指定模拟后端；左下诊断条显示后端、状态（平静/好奇/警觉/受惊）、FPS、粒子数、质量档位与目标帧率。
 
-## MVP
+## 体验要点
 
-- 一个生命体，20,000–100,000 个 GPU 粒子，包含 Core、Body、Aura。
-- 呼吸、自主 Idle、Flow Field / Curl Noise，以及 Curious / Scared / Calm 连续过渡。
-- 鼠标靠近、驱散与自然重新聚合，交互带有生物式反应延迟。
-- Web Demo、透明桌面窗口与 FPS 自适应质量。
+- 启动：黑暗中粒子逐个显现 → 旋涡收拢 → 约 7.5 秒凝聚成呼吸的生命体。
+- 缓慢靠近：它感知你、试探、好奇时核心会主动靠近。
+- 高速划过：身体被冲散、核心暴露，约 3 秒旋涡式重组，之后与你保持更远距离。
+- 长时间不互动：它进入低功耗（60→30→15 FPS），动作放缓。
+- 质量档位自动升降（Low 8k → Ultra 100k 粒子）。
 
-验收核心：即使没有账号、成长和音乐，用户也愿意观察并互动 5 分钟。若达不到，继续打磨生命感。
+## 平台
 
-## 拟采用的技术
+- **Web**：完整体验（Chrome/Edge 推荐，WebGPU 优先，WebGL2 后备）。
+- **macOS / Windows**：Tauri 2 桌面窗口。macOS 已验证运行与交互；透明合成受 WKWebView 层限制（黑底，诊断见 [docs/reports/phase-8.md](docs/reports/phase-8.md)）；Windows 待验证。
 
-Vue 3、TypeScript、Three.js；桌面壳优先 Tauri 2；探索 WebGPU GPU Compute，准备 WebGL2 GPGPU 后备路径。版本及平台能力在工程初始化时验证，当前不承诺全部能力已可用。
+## MVP 验收
+
+自动化 soak（5 分钟混合场景）通过：0 错误、情绪自主转换、冲击-重组循环稳定、低功耗调度生效。记录见 [docs/reports/mvp-acceptance.md](docs/reports/mvp-acceptance.md)；「五分钟真人体验」验收待用户实际运行补充。
 
 ## 文档导航
 
