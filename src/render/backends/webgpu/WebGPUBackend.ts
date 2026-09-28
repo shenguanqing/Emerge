@@ -11,9 +11,10 @@ const COMPUTE_WGSL = /* wgsl */ `
 struct Sim {
   data0: vec4f,          // dt, time, breath, damping
   core_shellK: vec4f,    // core.xyz, shellK
-  data2: vec4f,          // coreG, noiseAmp, bodyBase, swirlBase
+  data2: vec4f,          // coreG, curlStrength, curlFreq, curlSpeed
   data3: vec4f,          // count, pad, pad, pad
   data4: vec4f,          // formMix, breathWave, revealT, revealSeconds
+  data5: vec4f,          // bodyBase, swirlBase, pad, pad
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -35,6 +36,78 @@ fn bodyRadius(dir: vec3f) -> f32 {
   return r;
 }
 
+// --- Simplex Noise 3D（Ashima Arts / Ian McEwan，公有领域实现，与 GLSL 数值一致） ---
+fn mod289_3(xv: vec3f) -> vec3f { return xv - floor(xv * (1.0 / 289.0)) * 289.0; }
+fn mod289_4(xv: vec4f) -> vec4f { return xv - floor(xv * (1.0 / 289.0)) * 289.0; }
+fn permute4(xv: vec4f) -> vec4f { return mod289_4(((xv * 34.0) + 1.0) * xv); }
+fn taylorInvSqrt4(r: vec4f) -> vec4f { return 1.79284291400159 - 0.85373472095314 * r; }
+
+fn snoise(v: vec3f) -> f32 {
+  let C = vec2f(1.0 / 6.0, 1.0 / 3.0);
+  let D = vec4f(0.0, 0.5, 1.0, 2.0);
+  var iv = floor(v + dot(v, vec3f(C.y)));
+  let x0 = v - iv + dot(iv, vec3f(C.x));
+  let g = step(x0.yzx, x0.xyz);
+  let l = 1.0 - g;
+  let i1 = min(g.xyz, l.zxy);
+  let i2 = max(g.xyz, l.zxy);
+  let x1 = x0 - i1 + vec3f(C.x);
+  let x2 = x0 - i2 + vec3f(C.y);
+  let x3 = x0 - vec3f(D.y);
+  iv = mod289_3(iv);
+  let p = permute4(permute4(permute4(
+      iv.z + vec4f(0.0, i1.z, i2.z, 1.0))
+    + iv.y + vec4f(0.0, i1.y, i2.y, 1.0))
+    + iv.x + vec4f(0.0, i1.x, i2.x, 1.0));
+  let nf = 0.142857142857;
+  let ns = nf * vec3f(D.w, D.y, D.z) - vec3f(D.x, D.z, D.x);
+  let j = p - 49.0 * floor(p * ns.z * ns.z);
+  let xm = floor(j * ns.z);
+  let ym = floor(j - 7.0 * xm);
+  let xr = xm * ns.x + vec4f(ns.y);
+  let yr = ym * ns.x + vec4f(ns.y);
+  let hv = 1.0 - abs(xr) - abs(yr);
+  let b0 = vec4f(xr.xy, yr.xy);
+  let b1 = vec4f(xr.zw, yr.zw);
+  let s0 = floor(b0) * 2.0 + 1.0;
+  let s1 = floor(b1) * 2.0 + 1.0;
+  let sh = -step(hv, vec4f(0.0));
+  let a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  let a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  let p0 = vec3f(a0.xy, hv.x);
+  let p1 = vec3f(a0.zw, hv.y);
+  let p2 = vec3f(a1.xy, hv.z);
+  let p3 = vec3f(a1.zw, hv.w);
+  let norm = taylorInvSqrt4(vec4f(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+  let p0n = p0 * norm.x;
+  let p1n = p1 * norm.y;
+  let p2n = p2 * norm.z;
+  let p3n = p3 * norm.w;
+  var m = max(0.6 - vec4f(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), vec4f(0.0));
+  m = m * m;
+  return 42.0 * dot(m * m, vec4f(dot(p0n, x0), dot(p1n, x1), dot(p2n, x2), dot(p3n, x3)));
+}
+
+// 向量势取同一标量场的三个固定偏移，中心差分求旋度（18 次采样）。
+fn curlNoise(pt: vec3f) -> vec3f {
+  let o1 = vec3f(31.416, -47.853, 12.793);
+  let o2 = vec3f(-233.145, 88.256, -137.317);
+  let e = 0.35;
+  let dx = vec3f(e, 0.0, 0.0);
+  let dy = vec3f(0.0, e, 0.0);
+  let dz = vec3f(0.0, 0.0, e);
+  let ax = vec3f(snoise(pt + dx), snoise(pt + dx + o1), snoise(pt + dx + o2));
+  let bx = vec3f(snoise(pt - dx), snoise(pt - dx + o1), snoise(pt - dx + o2));
+  let ay = vec3f(snoise(pt + dy), snoise(pt + dy + o1), snoise(pt + dy + o2));
+  let by = vec3f(snoise(pt - dy), snoise(pt - dy + o1), snoise(pt - dy + o2));
+  let az = vec3f(snoise(pt + dz), snoise(pt + dz + o1), snoise(pt + dz + o2));
+  let bz = vec3f(snoise(pt - dz), snoise(pt - dz + o1), snoise(pt - dz + o2));
+  let dpx = (ax - bx) / (2.0 * e);
+  let dpy = (ay - by) / (2.0 * e);
+  let dpz = (az - bz) / (2.0 * e);
+  return vec3f(dpz.y - dpy.z, dpx.z - dpz.x, dpy.x - dpx.y);
+}
+
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
@@ -54,9 +127,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let core = sim.core_shellK.xyz;
   let shellK = sim.core_shellK.w;
   let coreG = sim.data2.x;
-  let noiseAmp = sim.data2.y;
-  let bodyBase = sim.data2.z;
-  let swirlBase = sim.data2.w;
+  let curlStrength = sim.data2.y;
+  let curlFreq = sim.data2.z;
+  let curlSpeed = sim.data2.w;
+  let bodyBase = sim.data5.x;
+  let swirlBase = sim.data5.y;
   let formMix = sim.data4.x;
   let breathWave = sim.data4.y;
 
@@ -94,16 +169,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let tangent = normalize(cross(vec3f(0.0, 1.0, 0.0), toCore) + vec3f(1e-5, 0.0, 0.0));
   force = force + tangent * swirl * smoothstep(5.0, 0.5, dist);
 
-  // 湍流（Phase 4 换 Curl Noise）：外围更活跃。
-  let t = time * 0.6 + seed * 12.0;
-  let turb = vec3f(
-    sin(t * 1.1 + p.y * 1.3),
-    sin(t * 1.3 + p.z * 1.1),
-    sin(t * 1.7 + p.x * 0.9));
-  var turbMul = 1.6;
-  if (layer < 0.5) { turbMul = 0.5; }
-  if (layer > 0.5 && layer < 1.5) { turbMul = 1.0; }
-  force = force + turb * (noiseAmp * turbMul);
+  // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
+  let flowPos = p * curlFreq + vec3f(0.0, 0.0, time * curlSpeed);
+  var curlMul = 1.5;
+  if (layer < 0.5) { curlMul = 0.3; }
+  if (layer > 0.5 && layer < 1.5) { curlMul = 1.0; }
+  force = force + curlNoise(flowPos) * (curlStrength * curlMul);
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   v = (v + force * dt) * exp(-damping * dt);
@@ -228,7 +299,7 @@ export class WebGPUBackend {
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
   /** [0..15] VP 矩阵；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds。 */
   private readonly renderData = new Float32Array(24);
-  private readonly simData = new Float32Array(20);
+  private readonly simData = new Float32Array(24);
   private readonly pointSize: number;
   private readIdx = 0;
   private disposed = false;
@@ -261,7 +332,7 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 80,
+      size: 96,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
@@ -373,12 +444,14 @@ export class WebGPUBackend {
     this.simData[6] = state.corePosition[2];
     this.simData[7] = this.sim.shellStiffness;
     this.simData[8] = this.sim.coreGravity;
-    this.simData[9] = this.sim.turbulenceAmp;
-    this.simData[10] = this.sim.bodyBase;
-    this.simData[11] = this.sim.swirlBase;
+    this.simData[9] = this.sim.curlStrength;
+    this.simData[10] = this.sim.curlFrequency;
+    this.simData[11] = this.sim.curlSpeed;
     this.simData[12] = this.particleCount;
     this.simData[16] = state.formMix;
     this.simData[17] = state.breathWave;
+    this.simData[20] = this.sim.bodyBase;
+    this.simData[21] = this.sim.swirlBase;
     d.queue.writeBuffer(this.simUniform, 0, this.simData);
 
     this.renderData[20] = state.formMix;

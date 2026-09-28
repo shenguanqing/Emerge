@@ -48,8 +48,12 @@ export interface SimulationParams {
   coreGravity: number;
   /** 指数速度阻尼（v *= exp(-damping·dt)）。 */
   damping: number;
-  /** 湍流幅度（Phase 2 为三角函数近似，Phase 4 换成 Curl Noise）。 */
-  turbulenceAmp: number;
+  /** Curl Noise 流场强度（散度为零的旋度力）。 */
+  curlStrength: number;
+  /** Curl Noise 空间频率（越大流动尺度越小）。 */
+  curlFrequency: number;
+  /** Curl Noise 时间漂移速度（缓慢演化，避免固定循环）。 */
+  curlSpeed: number;
   /** 有机形体基础半径（世界单位），形体函数在 shader 内定义。 */
   bodyBase: number;
   /** 凝聚期旋涡切向力基准强度（随 formMix 衰减到 0）。 */
@@ -60,7 +64,9 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
   shellStiffness: 2.2,
   coreGravity: 0.18,
   damping: 1.6,
-  turbulenceAmp: 0.35,
+  curlStrength: 0.85,
+  curlFrequency: 0.5,
+  curlSpeed: 0.06,
   bodyBase: 1.35,
   swirlBase: 2.6,
 };

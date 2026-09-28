@@ -1,12 +1,13 @@
 # 开发路线
 
-当前进度：Phase 1–3 已完成并通过验证（见 [reports/](reports/)）；Phase 4 进行中。按阶段交付可运行结果，阶段检查通过后推进。下表是计划，不是已有功能清单。
+当前进度：Phase 1–4 已完成并通过验证（见 [reports/](reports/)）；Phase 5 进行中。按阶段交付可运行结果，阶段检查通过后推进。下表是计划，不是已有功能清单。
 
 | 阶段 | 交付范围 | 完成条件 |
 | --- | --- | --- |
 | Phase 1 架构与渲染 Prototype（✅ 已完成） | Vue / TypeScript 工程，核心与渲染边界，最小粒子画面、能力探测 | Web 可运行；记录 WebGPU / WebGL2 可用性；建立真实启动和验证命令 |
 | Phase 2 GPU Particle Simulation（✅ 已完成） | GPU 位置/速度更新，双缓冲、时间步、资源释放与后备路径 | 至少 20k 粒子稳定模拟；两种后端分别验证或明确阻塞 |
 | Phase 3 基础形态（✅ 已完成） | Core / Body / Aura、呼吸、启动凝聚 | 三层可辨，有有机轮廓；不呈现普通发光球 |
+| Phase 4 Flow Field / Curl Noise（✅ 已完成） | 相关流动、局部扰动与阻尼 | 长时间运动不散架，避免固定循环与随机乱飞 |
 | Phase 2 GPU Particle Simulation | GPU 位置/速度更新，双缓冲、时间步、资源释放与后备路径 | 至少 20k 粒子稳定模拟；两种后端分别验证或明确阻塞 |
 | Phase 3 基础形态 | Core / Body / Aura、呼吸、启动凝聚 | 三层可辨，有有机轮廓；不呈现普通发光球 |
 | Phase 4 Flow Field / Curl Noise | 相关流动、局部扰动与阻尼 | 长时间运动不散架，避免固定循环与随机乱飞 |
