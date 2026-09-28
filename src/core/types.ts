@@ -28,6 +28,10 @@ export interface LifeParams {
   scatterRecoverTau: number;
   /** 警觉消退时间常数（秒）：受惊后保持更远距离。 */
   waryTau: number;
+  /** 情绪基线：能量 / 好奇 / 信任（0..1），Phase 10 由 DNA 接管。 */
+  energyBase: number;
+  curiosityBase: number;
+  trustBase: number;
 }
 
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
@@ -44,6 +48,9 @@ export const DEFAULT_LIFE_PARAMS: LifeParams = {
   scatterSpeed: 3.0,
   scatterRecoverTau: 1.1,
   waryTau: 6.0,
+  energyBase: 0.45,
+  curiosityBase: 0.35,
+  trustBase: 0.4,
 };
 
 /**
@@ -112,6 +119,18 @@ export interface LifeState {
   scatter: number;
   /** 警觉程度 0..1（受惊后保持更远距离，消退更慢）。 */
   wary: number;
+  /** 情绪连续参数与行为权重（诊断与渲染共用）。 */
+  energy: number;
+  stress: number;
+  curious: number;
+  scared: number;
+  calm: number;
+  /** 受惊收缩 0..1（身体锚点收缩）。 */
+  contract: number;
+  /** 情绪色偏 0..1（平静冷 ↔ 活跃暖），克制幅度。 */
+  moodShift: number;
+  /** 指针排斥乘数（信任/好奇时温和靠近，受惊时加强）。 */
+  pointerPushMul: number;
   /** 感知到的指针位置（世界坐标，含反应延迟）。 */
   pointerPos: [number, number, number];
   /** 感知到的指针速度（世界单位/秒）。 */
@@ -131,6 +150,14 @@ export function createLifeState(): LifeState {
     revealT: 0,
     scatter: 0,
     wary: 0,
+    energy: 0.45,
+    stress: 0,
+    curious: 0,
+    scared: 0,
+    calm: 1,
+    contract: 0,
+    moodShift: 0.5,
+    pointerPushMul: 1,
     pointerPos: [0, 0, 99],
     pointerVel: [0, 0, 0],
     pointerActive: 0,

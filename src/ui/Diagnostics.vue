@@ -5,12 +5,14 @@ defineProps<{
   fps: number;
   particles: number;
   dpr: number;
+  mood: string;
 }>();
 </script>
 
 <template>
   <div class="diag" aria-live="polite">
     <span class="chip">后端 {{ backend }}</span>
+    <span class="chip">{{ mood }}</span>
     <span class="chip">{{ fps }} FPS</span>
     <span class="chip">{{ particles.toLocaleString() }} 粒子</span>
     <span class="chip">DPR {{ dpr.toFixed(2) }}</span>

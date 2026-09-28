@@ -18,6 +18,7 @@ const diag = reactive({
   fps: 0,
   particles: DEFAULT_LIFE_PARAMS.particleCount,
   dpr: 1,
+  mood: '平静',
 });
 
 type Backend = WebGL2Backend | WebGPUBackend;
@@ -114,6 +115,10 @@ onMounted(async () => {
       diag.fps = Math.round(fpsFrames / fpsWindow);
       fpsWindow = 0;
       fpsFrames = 0;
+      // 状态显示：连续权重的主导项，非互斥切换。
+      const st = lifeEngine.getState();
+      diag.mood =
+        st.scared > 0.45 ? '受惊' : st.curious > 0.45 ? '好奇' : st.contract > 0.2 ? '警觉' : '平静';
     }
 
     inputPointer.tick(dt);
@@ -144,6 +149,7 @@ onBeforeUnmount(() => {
       :fps="diag.fps"
       :particles="diag.particles"
       :dpr="diag.dpr"
+      :mood="diag.mood"
     />
   </main>
 </template>

@@ -18,7 +18,8 @@ struct Sim {
   pointerPos_act: vec4f, // pointer.xyz, active(0..1)
   pointerVel_pad: vec4f, // pointerVel.xyz, pad
   data6: vec4f,          // pointerRadius, pointerPush, impactSpeed, impactPush
-  data7: vec4f,          // scatter, wary, pad, pad
+  data7: vec4f,          // scatter, wary, contract, energy
+  data8: vec4f,          // pointerPushMul, pad, pad, pad
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -150,7 +151,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let dir = vec3f(cos(a1) * s2, sin(a1) * s2, a2);
 
   // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
-  let bodyR = bodyRadius(dir) * bodyBase * breath;
+  // 受惊收缩：核心轻微收紧，身体明显收拢（与 WebGL2 后端一致）。
+  var contractMul = 1.0 - 0.22 * sim.data7.z;
+  if (layer < 0.5) { contractMul = 1.0 - 0.12 * sim.data7.z; }
+  let bodyR = bodyRadius(dir) * bodyBase * breath * contractMul;
   var radMul = mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - breathWave));
   if (layer < 0.5) { radMul = mix(0.16, 0.34, h); }
   if (layer > 0.5 && layer < 1.5) { radMul = mix(0.88, 1.04, h); }
@@ -181,7 +185,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   var curlMul = 1.5;
   if (layer < 0.5) { curlMul = 0.3; }
   if (layer > 0.5 && layer < 1.5) { curlMul = 1.0; }
-  force = force + curlNoise(flowPos) * (curlStrength * curlMul);
+  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * curlMul);
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   if (sim.pointerPos_act.w > 0.01) {
@@ -192,7 +196,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     let speed = length(sim.pointerVel_pad.xyz);
     let impact = smoothstep(sim.data6.z, sim.data6.z * 2.5, speed) * influence;
     let waryMul = 1.0 + sim.data7.y * 0.6;
-    force = force + away * (influence * sim.data6.y * waryMul + impact * sim.data6.w * 3.0);
+    force = force + away * (influence * sim.data6.y * sim.data8.x * waryMul + impact * sim.data6.w * 3.0);
     force = force + sim.pointerVel_pad.xyz * impact * 0.9;
   }
 
@@ -210,6 +214,7 @@ struct R {
   vp: mat4x4f,
   data: vec4f,           // pointSizePx, viewportW, viewportH, unused
   data2: vec4f,          // formMix, breathWave, revealT, revealSeconds
+  data3: vec4f,          // moodShift, pad, pad, pad
 };
 
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
@@ -260,7 +265,8 @@ fn fs(vin: VOut) -> @location(0) vec4f {
 
   // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
   let breathWave = r.data2.y;
-  let coreCol = vec3f(0.90, 0.95, 1.0) * (1.6 + 1.0 * breathWave);
+  let coreCol = mix(vec3f(0.90, 0.95, 1.0), vec3f(1.0, 0.96, 0.9), r.data3.x * 0.35)
+              * (1.6 + 1.0 * breathWave);
   let bodyCol = vec3f(0.42, 0.62, 0.95) * 1.35;
   let auraCol = vec3f(0.24, 0.40, 0.75) * 0.8;
   var col = auraCol;
@@ -317,9 +323,9 @@ export class WebGPUBackend {
   private readonly renderPipeline: GPURenderPipeline;
   private readonly computeBinds: [GPUBindGroup, GPUBindGroup];
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
-  /** [0..15] VP 矩阵；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds。 */
-  private readonly renderData = new Float32Array(24);
-  private readonly simData = new Float32Array(52);
+  /** [0..15] VP；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds；[24] moodShift。 */
+  private readonly renderData = new Float32Array(28);
+  private readonly simData = new Float32Array(56);
   private readonly pointSize: number;
   private readIdx = 0;
   private disposed = false;
@@ -352,11 +358,11 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 208,
+      size: 224,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
-      size: 96,
+      size: 112,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -485,12 +491,16 @@ export class WebGPUBackend {
     this.simData[35] = this.sim.impactPush;
     this.simData[40] = state.scatter;
     this.simData[41] = state.wary;
+    this.simData[42] = state.contract;
+    this.simData[43] = state.energy;
+    this.simData[48] = state.pointerPushMul;
     d.queue.writeBuffer(this.simUniform, 0, this.simData);
 
     this.renderData[20] = state.formMix;
     this.renderData[21] = state.breathWave;
     this.renderData[22] = state.revealT;
     this.renderData[23] = this.params.revealSeconds;
+    this.renderData[24] = state.moodShift;
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 
     const read = this.readIdx;

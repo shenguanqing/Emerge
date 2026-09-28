@@ -1,5 +1,7 @@
 import { createLifeState, type LifeParams, type LifeState } from './types';
 import { PointerPerception, type PointerReading } from './PointerPerception';
+import { EmotionEngine } from './EmotionEngine';
+import { BehaviorEngine } from './BehaviorEngine';
 
 /**
  * 生命引擎：唯一持有模拟时钟与生命状态。
@@ -9,6 +11,9 @@ import { PointerPerception, type PointerReading } from './PointerPerception';
 export class LifeEngine {
   private readonly state: LifeState;
   private readonly perception = new PointerPerception();
+  private readonly emotion: EmotionEngine;
+  private readonly behavior = new BehaviorEngine();
+  private lastScatter = 0;
   private pointerReading: PointerReading = {
     active: false,
     world: [0, 0, 99],
@@ -19,6 +24,7 @@ export class LifeEngine {
 
   constructor(private readonly params: LifeParams) {
     this.state = createLifeState();
+    this.emotion = new EmotionEngine(params.energyBase, params.curiosityBase, params.trustBase);
   }
 
   /** 提供最新原始指针读数；感知延迟在 update 内平滑。 */
@@ -37,28 +43,6 @@ export class LifeEngine {
     this.state.time += dt;
     this.state.revealT += dt;
 
-    // 指针感知：指数滞后产生反应延迟（tau 见 PointerPerception）。
-    this.perception.update(this.pointerReading, dt);
-    const perceived = this.perception.perceived;
-    this.state.pointerPos = perceived.world;
-    this.state.pointerVel = perceived.worldVel;
-    this.state.pointerActive = this.perception.activityLevel;
-
-    // 受惊散开：感知指针速度超过阈值时快速上升，随后指数消退；
-    // 刚度在消退中逐渐恢复，形成 2–4 秒的旋涡式重组。
-    const speed = Math.hypot(perceived.worldVel[0], perceived.worldVel[1], perceived.worldVel[2]);
-    const shock = Math.max(0, speed - this.params.scatterSpeed) / this.params.scatterSpeed;
-    if (shock > 0) {
-      this.scatter = Math.min(1, this.scatter + shock * dt * 4);
-      this.wary = Math.max(this.wary, Math.min(1, shock));
-    }
-    this.scatter *= Math.exp(-dt / this.params.scatterRecoverTau);
-    if (this.scatter < 0.005) this.scatter = 0;
-    this.wary *= Math.exp(-dt / this.params.waryTau);
-    if (this.wary < 0.005) this.wary = 0;
-    this.state.scatter = this.scatter;
-    this.state.wary = this.wary;
-
     // 呼吸：相位连续累积，缩放 = 1 + amplitude · (0.5 − 0.5·cos 2π·rate·t)，
     // 平滑经过 1 → 1+amp → 1，无硬切换。
     this.state.breathPhase = this.params.breathRate * this.state.time * Math.PI * 2;
@@ -72,11 +56,63 @@ export class LifeEngine {
     );
     this.state.formMix = raw * raw * (3 - 2 * raw);
 
-    // 核心自主漂移：慢速三轴 Lissajous 游走（Phase 7 由行为系统接管驱动）。
+    // 指针感知：指数滞后产生反应延迟（tau 见 PointerPerception）。
+    this.perception.update(this.pointerReading, dt);
+    const perceived = this.perception.perceived;
+    this.state.pointerPos = perceived.world;
+    this.state.pointerVel = perceived.worldVel;
+    this.state.pointerActive = this.perception.activityLevel;
+
+    // 受惊散开：感知指针速度超过阈值时快速上升，随后指数消退；
+    // 刚度在消退中逐渐恢复，形成 2–4 秒的旋涡式重组。
+    const speed = Math.hypot(perceived.worldVel[0], perceived.worldVel[1], perceived.worldVel[2]);
+    const shockSpeed = Math.max(0, speed - this.params.scatterSpeed) / this.params.scatterSpeed;
+    if (shockSpeed > 0) {
+      this.scatter = Math.min(1, this.scatter + shockSpeed * dt * 4);
+      this.wary = Math.max(this.wary, Math.min(1, shockSpeed));
+    }
+    this.scatter *= Math.exp(-dt / this.params.scatterRecoverTau);
+    if (this.scatter < 0.005) this.scatter = 0;
+    this.wary *= Math.exp(-dt / this.params.waryTau);
+    if (this.wary < 0.005) this.wary = 0;
+    this.state.scatter = this.scatter;
+    this.state.wary = this.wary;
+
+    // ---- 情绪与行为：连续参数驱动状态权重（无互斥切换） ----
+    const shock = Math.max(0, this.scatter - this.lastScatter);
+    this.lastScatter = this.scatter;
+    const perceivedSpeed = Math.hypot(
+      perceived.worldVel[0], perceived.worldVel[1], perceived.worldVel[2]);
+    const dist = Math.hypot(
+      perceived.world[0] - this.state.corePosition[0],
+      perceived.world[1] - this.state.corePosition[1]);
+    this.emotion.update({
+      dt,
+      pointerActive: this.state.pointerActive,
+      pointerSpeed: perceivedSpeed,
+      pointerDist: dist,
+      shock,
+      time: this.state.time,
+    });
+    const em = this.emotion.state;
+
+    // 自主漂移基线：慢速三轴 Lissajous 游走（行为系统在此之上叠加情绪偏置）。
     const t = this.state.time * this.params.driftSpeed;
     const r = this.params.driftRadius;
-    this.state.corePosition[0] = Math.sin(t * 0.7) * r;
-    this.state.corePosition[1] = Math.sin(t * 1.1 + 1.3) * r * 0.6;
-    this.state.corePosition[2] = Math.cos(t * 0.9) * r * 0.4;
+    const driftPos: [number, number, number] = [
+      Math.sin(t * 0.7) * r,
+      Math.sin(t * 1.1 + 1.3) * r * 0.6,
+      Math.cos(t * 0.9) * r * 0.4,
+    ];
+    const behavior = this.behavior.update(dt, em, perceived, driftPos, this.params.driftSpeed);
+    this.state.corePosition = behavior.coreTarget;
+    this.state.energy = em.energy;
+    this.state.stress = em.stress;
+    this.state.curious = behavior.curious;
+    this.state.scared = behavior.scared;
+    this.state.calm = behavior.calm;
+    this.state.contract = behavior.contract;
+    this.state.moodShift = em.mood;
+    this.state.pointerPushMul = behavior.pointerPushMul;
   }
 }

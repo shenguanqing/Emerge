@@ -39,6 +39,9 @@ uniform float uImpactSpeed;
 uniform float uImpactPush;
 uniform float uScatter;
 uniform float uWary;
+uniform float uContract;
+uniform float uEnergy;
+uniform float uPointerPushMul;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -144,7 +147,9 @@ void main() {
   vec3 dir = vec3(cos(a1) * s2, sin(a1) * s2, a2);
 
   // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
-  float bodyR = bodyRadius(dir) * uBodyBase * uBreath;
+  // 受惊收缩：核心轻微收紧，身体明显收拢（由 BehaviorEngine 平滑驱动）。
+  float contractMul = layer < 0.5 ? (1.0 - 0.12 * uContract) : (1.0 - 0.22 * uContract);
+  float bodyR = bodyRadius(dir) * uBodyBase * uBreath * contractMul;
   float radMul = layer < 0.5 ? mix(0.16, 0.34, h)
                : layer < 1.5 ? mix(0.88, 1.04, h)
                : mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - uBreathWave));
@@ -169,7 +174,7 @@ void main() {
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
   vec3 flowPos = p * uCurlFreq + vec3(0.0, 0.0, uTime * uCurlSpeed);
   float curlMul = layer < 0.5 ? 0.3 : (layer < 1.5 ? 1.0 : 1.5);
-  force += curlNoise(flowPos) * (uCurlStrength * curlMul);
+  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * curlMul);
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   // 指针读数已经过感知延迟，此处只做纯力响应。
@@ -182,7 +187,7 @@ void main() {
     float impact = smoothstep(uImpactSpeed, uImpactSpeed * 2.5, speed) * influence;
     // 警觉期：影响半径与排斥略增，保持更远距离（缓慢消退）。
     float waryMul = 1.0 + uWary * 0.6;
-    force += away * (influence * uPointerPush * waryMul + impact * uImpactPush * 3.0);
+    force += away * (influence * uPointerPush * uPointerPushMul * waryMul + impact * uImpactPush * 3.0);
     force += uPointerVel * impact * 0.9;
   }
 
@@ -246,6 +251,7 @@ void main() {
 const POINTS_FRAG = /* glsl */ `
 precision mediump float;
 uniform float uBreathWave;
+uniform float uMoodShift;
 varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
@@ -257,7 +263,8 @@ void main() {
   a = 0.30 + 0.70 * a * a;
 
   // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
-  vec3 coreCol = vec3(0.90, 0.95, 1.0) * (1.6 + 1.0 * uBreathWave);
+  vec3 coreCol = mix(vec3(0.90, 0.95, 1.0), vec3(1.0, 0.96, 0.9), uMoodShift * 0.35)
+               * (1.6 + 1.0 * uBreathWave);
   vec3 bodyCol = vec3(0.42, 0.62, 0.95) * 1.35;
   vec3 auraCol = vec3(0.24, 0.40, 0.75) * 0.8;
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
@@ -287,7 +294,7 @@ export class WebGL2Backend {
 
   constructor(
     canvas: HTMLCanvasElement,
-    params: LifeParams,
+    private readonly params: LifeParams,
     private readonly sim: SimulationParams,
   ) {
     this.renderer = new THREE.WebGLRenderer({
@@ -345,6 +352,9 @@ export class WebGL2Backend {
       uImpactPush: { value: this.sim.impactPush },
       uScatter: { value: 0 },
       uWary: { value: 0 },
+      uContract: { value: 0 },
+      uEnergy: { value: this.params.energyBase },
+      uPointerPushMul: { value: 1 },
     };
     Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
     Object.assign(this.velVar.material.uniforms, shared);
@@ -375,6 +385,7 @@ export class WebGL2Backend {
         uRevealSeconds: { value: params.revealSeconds },
         uFormMix: { value: 0 },
         uBreathWave: { value: 0 },
+        uMoodShift: { value: 0.5 },
       },
       vertexShader: POINTS_VERT,
       fragmentShader: POINTS_FRAG,
@@ -417,12 +428,16 @@ export class WebGL2Backend {
     u.uPointerActive.value = state.pointerActive;
     u.uScatter.value = state.scatter;
     u.uWary.value = state.wary;
+    u.uContract.value = state.contract;
+    u.uEnergy.value = state.energy;
+    u.uPointerPushMul.value = state.pointerPushMul;
     this.posVar.material.uniforms.uDt.value = dt;
 
     const m = this.material.uniforms;
     m.uRevealT.value = state.revealT;
     m.uFormMix.value = state.formMix;
     m.uBreathWave.value = state.breathWave;
+    m.uMoodShift.value = state.moodShift;
 
     this.gpu.compute();
     m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
