@@ -48,7 +48,16 @@
 3. KVC `drawsBackground` 在新版 WKWebView 抛 ObjC 异常（Rust 侧表现为 non-unwinding panic）→ 改用私有方法 + respondsToSelector 守卫。
 4. `set_background_color` 在 overlay 就绪前测试会掩盖真实黑底来源，导致一轮误判；二分定位（隐藏 overlay）澄清。
 
+## 闭环复查（同日补充）
+
+应用侧全部手段用尽后做了决定性二分：页面绘制「左半不透明绿色 / 右半完全透明」——左半完美合成到屏幕，右半显示黑色而非窗口背后的应用。证实黑底位于 WKWebView/窗口基底层，与页面内容无关。此前所有修正（NSWindow setOpaque:NO + clearColor、WKWebView 实例 setOpaque:false + _setDrawsBackground:NO + underPageBackgroundColor clearColor、tao 窗口路径、config KVC）全部生效但基底仍黑。
+
+- 升级检查：wry 0.57.0 已是 crates.io 最新（2026-09-08 发布），无升级空间。
+- 结论：上游缺陷。已提交 issue 并附完整证据：**[tauri-apps/wry#1867](https://github.com/tauri-apps/wry/issues/1867)**。
+- Windows（WebView2）透明路径预期不受此 WKWebView 缺陷影响；本环境无 Windows，待用户在 Windows 上按 README 步骤验证。
+- 后续跟进：关注上游 issue 修复；修复后应用侧无需改动（overlay 合成与页面透明已就绪）。
+
 ## 体验结论与后续
 
-- 桌面模式当前形态：深色「观察窗」内呈现生命体，浮于桌面，可交互。透明合成是已知阻塞项，不影响其余系统推进。
+- 桌面模式当前形态：深色「观察窗」内呈现生命体，浮于桌面，可交互。透明合成是上游缺陷，不影响其余系统推进。
 - 下一阶段：Phase 9 性能优化——自适应档位（Low/Medium/High/Ultra）、闲置降帧 60→30→15、隐藏/最小化节流与资源稳定性。

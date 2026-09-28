@@ -11,7 +11,7 @@
 | Phase 5 Pointer Force Field（✅ 已完成） | 指针坐标、速度、靠近感知、反应延迟与冲击 | 慢速靠近与高速划过有可辨差异 |
 | Phase 6 驱散与重新聚合（✅ 已完成） | 核心保留、旋涡式回归与拖尾 | 目标 2–4 秒自然重组，无位置瞬移 |
 | Phase 7 Behavior / Emotion（✅ 已完成） | 自主 Idle，Curious / Scared / Calm，连续参数 | 平滑转换，受惊后短期安全距离增加，无需用户输入仍有生命感 |
-| Phase 8 透明桌面窗口（⚠️ 部分通过） | Tauri 2，macOS / Windows 透明无边框，基础交互与退出入口 | macOS：窗口/置顶/交互/退出 ✅，透明合成 ⚠️（WKWebView 层限制，诊断与 workaround 已记录）；Windows：未验证 |
+| Phase 8 透明桌面窗口（⚠️ 部分通过） | Tauri 2，macOS / Windows 透明无边框，基础交互与退出入口 | macOS：窗口/置顶/交互/退出 ✅，透明合成 ⚠️（上游缺陷 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)，诊断与应用侧 workaround 已记录）；Windows：待用户在 Windows 环境验证 |
 | Phase 9 性能优化（✅ 已完成） | 自适应档位、低功耗、隐藏/恢复、资源稳定性 | Ultra 100k @ 120 FPS；四档滞回升降档；闲置 60→30→15 低功耗调度 |
 | Phase 10 后续系统（未开始） | DNA、成长、记忆、现实时间/离线、音乐、完整观察空间、分享及同步 | 每项独立设计与验证；不得一次性展开全部功能 |
 

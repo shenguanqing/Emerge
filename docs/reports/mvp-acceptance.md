@@ -22,7 +22,7 @@
 
 - **五分钟真人体验**：VALIDATION.md 要求邀请试用者自由观察互动 5 分钟并记录主观反馈。自动化 soak 只能验证功能与稳定性，无法替代「愿意盯着玩 5 分钟」的主观判断——需要开发者本人或试用者实际运行后补充记录（更新本文件与 [VALIDATION.md](../VALIDATION.md)）。
 - Windows 平台（透明窗口、WebView2 WebGPU/WebGL2、输入）。
-- macOS 桌面透明合成的最后一层（WKWebView 基底，诊断见 [phase-8.md](phase-8.md)）。
+- macOS 桌面透明合成的最后一层：已确认为上游缺陷并提交 [tauri-apps/wry#1867](https://github.com/tauri-apps/wry/issues/1867)（应用侧全部路径 + 二分实验证据）；修复后应用无需改动。
 - 功耗实测（需系统级采样工具）。
 
 ## 结论
