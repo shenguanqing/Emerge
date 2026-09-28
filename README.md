@@ -8,7 +8,14 @@
 
 ## 当前状态
 
-仓库已完成需求与技术规划文档初始化，**尚未实现可运行的 Prototype**。当前没有安装、开发或构建命令；进入 Phase 1 后随真实工程补充。
+Phase 1（架构与渲染 Prototype）已完成并通过验证，详见 [docs/reports/phase-1.md](docs/reports/phase-1.md)；Phase 2（GPU 粒子模拟）进行中。
+
+```bash
+npm install
+npm run dev        # 开发服务器
+npm run build      # 类型检查 + 生产构建
+npm run preview    # 预览构建产物
+```
 
 项目名为 Emerge，产品方向为 Particle Life / 粒子生命体。首阶段面向 macOS、Windows 和 Web；iOS / Android 为后续扩展方向。
 

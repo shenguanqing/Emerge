@@ -7,3 +7,8 @@
 # 环境变量
 .env
 .env.*
+
+# Node / 构建
+node_modules/
+dist/
+*.local

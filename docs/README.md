@@ -10,6 +10,7 @@
 | [ROADMAP.md](ROADMAP.md) | Phase 1–10 的交付和完成条件 |
 | [VALIDATION.md](VALIDATION.md) | 功能、视觉、兼容与性能验收 |
 | [PHASE_REPORT_TEMPLATE.md](PHASE_REPORT_TEMPLATE.md) | 每阶段运行、实测环境与交付结果记录模板 |
+| [reports/phase-1.md](reports/phase-1.md) | Phase 1 交付记录（架构与渲染 Prototype） |
 | [decisions/0001-technical-direction.md](decisions/0001-technical-direction.md) | 初始技术选择及待验证风险 |
 | [ORIGINAL_BRIEF.md](ORIGINAL_BRIEF.md) | 用户原始需求存档 |
 
