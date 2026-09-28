@@ -34,6 +34,9 @@ export interface LifeParams {
   trustBase: number;
 }
 
+/** 粒子缓冲按上限分配，质量档位只改变活跃数量（避免重分配）。 */
+export const MAX_PARTICLES = 100_000;
+
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
   particleCount: 32768,
   breathAmplitude: 0.08,

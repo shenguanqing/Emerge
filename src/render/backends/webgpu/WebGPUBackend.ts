@@ -1,4 +1,4 @@
-import type { LifeParams, LifeState, SimulationParams } from '../../../core/types';
+import { MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
 import { createParticleInitData } from '../particleInit';
 
 /**
@@ -310,7 +310,7 @@ function mat4Multiply(a: Float32Array, b: Float32Array): Float32Array {
 
 export class WebGPUBackend {
   readonly id = 'webgpu' as const;
-  readonly particleCount: number;
+  particleCount: number;
 
   private readonly device: GPUDevice;
   private readonly context: GPUCanvasContext;
@@ -326,7 +326,8 @@ export class WebGPUBackend {
   /** [0..15] VP；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds；[24] moodShift。 */
   private readonly renderData = new Float32Array(28);
   private readonly simData = new Float32Array(56);
-  private readonly pointSize: number;
+  private pointSize: number;
+  private dpr = 1;
   private clearAlpha = 1;
   private readIdx = 0;
   private disposed = false;
@@ -345,8 +346,8 @@ export class WebGPUBackend {
     this.particleCount = params.particleCount;
     this.pointSize = params.pointSize;
 
-    const init = createParticleInitData(params.particleCount);
-    const bufSize = params.particleCount * 16;
+    const init = createParticleInitData(MAX_PARTICLES);
+    const bufSize = MAX_PARTICLES * 16;
     const makeBuf = (data: Float32Array): GPUBuffer => {
       const buf = device.createBuffer({
         size: bufSize,
@@ -541,9 +542,21 @@ export class WebGPUBackend {
     this.readIdx = write;
   }
 
+  /** 质量档位：改变活跃粒子数（dispatch 与绘制数量）。 */
+  setActiveCount(count: number): void {
+    this.particleCount = Math.min(count, MAX_PARTICLES);
+  }
+
+  /** 质量档位：粒子基础尺寸。 */
+  setPointSize(size: number): void {
+    this.pointSize = size;
+    this.renderData[16] = size * this.dpr;
+  }
+
   resize(width: number, height: number, dpr: number): void {
     this.canvas.width = Math.max(1, Math.floor(width * dpr));
     this.canvas.height = Math.max(1, Math.floor(height * dpr));
+    this.dpr = dpr;
     this.renderData[16] = this.pointSize * dpr;
     this.renderData[17] = this.canvas.width;
     this.renderData[18] = this.canvas.height;

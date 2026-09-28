@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
-import type { LifeParams, LifeState, SimulationParams } from '../../../core/types';
+import { MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
 import { createParticleInitData } from '../particleInit';
 
 /**
@@ -278,7 +278,7 @@ type SimVariable = ReturnType<GPUComputationRenderer['addVariable']>;
 
 export class WebGL2Backend {
   readonly id = 'webgl2' as const;
-  readonly particleCount: number;
+  particleCount: number;
   private readonly simH: number;
 
   private readonly renderer: THREE.WebGLRenderer;
@@ -324,7 +324,7 @@ export class WebGL2Backend {
     }
     this.camera.position.set(0, 0, 7);
     this.particleCount = params.particleCount;
-    this.simH = Math.ceil(params.particleCount / SIM_W);
+    this.simH = Math.ceil(MAX_PARTICLES / SIM_W);
 
     // 浮点渲染目标不可用时降级 HalfFloat，保持可用性。
     this.gpu = new GPUComputationRenderer(SIM_W, this.simH, this.renderer);
@@ -333,7 +333,7 @@ export class WebGL2Backend {
       this.gpu.setDataType(THREE.HalfFloatType);
     }
 
-    const init = createParticleInitData(params.particleCount);
+    const init = createParticleInitData(MAX_PARTICLES);
     const pos0 = this.gpu.createTexture();
     const vel0 = this.gpu.createTexture();
     const posInit = pos0.image.data as Float32Array;
@@ -386,12 +386,13 @@ export class WebGL2Backend {
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute(
       'position',
-      new THREE.BufferAttribute(new Float32Array(params.particleCount * 3), 3),
+      new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3),
     );
-    const refs = new Float32Array(params.particleCount);
-    for (let i = 0; i < params.particleCount; i += 1) refs[i] = i;
+    const refs = new Float32Array(MAX_PARTICLES);
+    for (let i = 0; i < MAX_PARTICLES; i += 1) refs[i] = i;
     this.geometry.setAttribute('aRef', new THREE.BufferAttribute(refs, 1));
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 12);
+    this.geometry.setDrawRange(0, params.particleCount);
 
     this.material = new THREE.ShaderMaterial({
       uniforms: {
@@ -414,6 +415,17 @@ export class WebGL2Backend {
     });
     this.points = new THREE.Points(this.geometry, this.material);
     this.scene.add(this.points);
+  }
+
+  /** 质量档位：改变活跃粒子数（缓冲按 MAX 分配，无需重建）。 */
+  setActiveCount(count: number): void {
+    this.particleCount = Math.min(count, MAX_PARTICLES);
+    this.geometry.setDrawRange(0, this.particleCount);
+  }
+
+  /** 质量档位：粒子基础尺寸。 */
+  setPointSize(size: number): void {
+    this.material.uniforms.uPointSize.value = size;
   }
 
   /** 每帧执行一次 GPU 模拟步进并渲染。 */

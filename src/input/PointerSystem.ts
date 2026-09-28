@@ -11,6 +11,9 @@ export class PointerSystem {
   private viewportH = 1;
   private inCanvas = false;
 
+  /** 最近一次指针活动的时间戳（performance.now）。 */
+  lastActivity = 0;
+
   private target: HTMLElement | null = null;
   private lastX = 0;
   private lastY = 0;
@@ -59,6 +62,7 @@ export class PointerSystem {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
     this.lastTime = now;
+    this.lastActivity = now;
     this.sinceMove = 0;
   };
 
@@ -79,6 +83,7 @@ export class PointerSystem {
 
   private readonly onEnter = () => {
     this.inCanvas = true;
+    this.lastActivity = performance.now();
   };
 
   private readonly onLeave = () => {

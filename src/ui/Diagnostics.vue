@@ -6,6 +6,8 @@ defineProps<{
   particles: number;
   dpr: number;
   mood: string;
+  quality: string;
+  targetFps: number;
 }>();
 </script>
 
@@ -15,6 +17,7 @@ defineProps<{
     <span class="chip">{{ mood }}</span>
     <span class="chip">{{ fps }} FPS</span>
     <span class="chip">{{ particles.toLocaleString() }} 粒子</span>
+    <span class="chip">{{ quality }} @ {{ targetFps }}fps</span>
     <span class="chip">DPR {{ dpr.toFixed(2) }}</span>
     <span v-if="note" class="note">{{ note }}</span>
   </div>

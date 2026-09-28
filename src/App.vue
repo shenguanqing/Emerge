@@ -9,6 +9,7 @@ import { WebGL2Backend } from './render/backends/webgl2/WebGL2Backend';
 import { WebGPUBackend } from './render/backends/webgpu/WebGPUBackend';
 import { probeCapabilities } from './render/capability';
 import { PointerSystem } from './input/PointerSystem';
+import { QUALITY_TIERS, QualityManager, type QualityTier } from './core/QualityManager';
 import Diagnostics from './ui/Diagnostics.vue';
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -19,7 +20,11 @@ const diag = reactive({
   particles: DEFAULT_LIFE_PARAMS.particleCount,
   dpr: 1,
   mood: '平静',
+  quality: 'high',
+  targetFps: 60,
 });
+
+const quality = new QualityManager();
 
 type Backend = WebGL2Backend | WebGPUBackend;
 
@@ -38,10 +43,21 @@ function resize(): void {
   if (!canvas || !backend) return;
   const w = canvas.clientWidth || window.innerWidth;
   const h = canvas.clientHeight || window.innerHeight;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const tier = QUALITY_TIERS[quality.tier as QualityTier];
+  const dpr = Math.min(window.devicePixelRatio || 1, tier.maxDpr);
   backend.resize(w, h, dpr);
   if (pointer) pointer.setViewport(w, h);
   diag.dpr = dpr;
+}
+
+/** 应用质量档位：粒子数、点尺寸、DPR。 */
+function applyTier(tier: QualityTier): void {
+  const cfg = QUALITY_TIERS[tier];
+  backend?.setActiveCount(cfg.particles);
+  backend?.setPointSize(cfg.pointSize);
+  diag.particles = cfg.particles;
+  diag.quality = tier;
+  resize();
 }
 
 onMounted(async () => {
@@ -132,22 +148,28 @@ onMounted(async () => {
   const activeBackend = backend;
   const inputPointer = pointer;
   (window as typeof window & { __emergeEngine?: LifeEngine }).__emergeEngine = lifeEngine;
+  (window as typeof window & { __emergeQuality?: QualityManager }).__emergeQuality = quality;
 
   resize();
   resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(canvas);
 
   lastTime = performance.now();
+  let frameAcc = 0;
   const loop = (now: number) => {
     rafId = requestAnimationFrame(loop);
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
 
-    // FPS：0.5s 滑动窗口平均。
+    // FPS：0.5s 滑动窗口平均 + 质量档位与低功耗调度。
     fpsWindow += dt;
     fpsFrames += 1;
     if (fpsWindow >= 0.5) {
       diag.fps = Math.round(fpsFrames / fpsWindow);
+      const idleSeconds = (performance.now() - inputPointer.lastActivity) / 1000;
+      const q = quality.sample(diag.fps, idleSeconds, fpsWindow);
+      if (q.tierChanged) applyTier(q.tier);
+      if (q.targetFpsChanged) diag.targetFps = q.targetFps;
       fpsWindow = 0;
       fpsFrames = 0;
       // 状态显示：连续权重的主导项，非互斥切换。
@@ -156,10 +178,17 @@ onMounted(async () => {
         st.scared > 0.45 ? '受惊' : st.curious > 0.45 ? '好奇' : st.contract > 0.2 ? '警觉' : '平静';
     }
 
-    inputPointer.tick(dt);
+    // 低功耗帧限制：闲置时 60→30→15，模拟步长按真实间隔保持速度一致。
+    frameAcc += dt;
+    const interval = 1 / quality.targetFps;
+    if (frameAcc + 0.0005 < interval) return;
+    const simDt = frameAcc;
+    frameAcc = 0;
+
+    inputPointer.tick(simDt);
     lifeEngine.setPointer(inputPointer.getReading());
-    lifeEngine.update(dt);
-    activeBackend.frame(lifeEngine.getState(), dt);
+    lifeEngine.update(simDt);
+    activeBackend.frame(lifeEngine.getState(), simDt);
   };
   rafId = requestAnimationFrame(loop);
 });
@@ -186,6 +215,8 @@ onBeforeUnmount(() => {
       :particles="diag.particles"
       :dpr="diag.dpr"
       :mood="diag.mood"
+      :quality="diag.quality"
+      :target-fps="diag.targetFps"
     />
   </main>
 </template>
