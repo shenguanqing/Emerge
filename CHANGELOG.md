@@ -16,5 +16,7 @@
 - 新增 docs/reports/phase-1.md 交付记录，更新 README 运行方式。
 - Phase 2：新增 WebGPU Compute 与 WebGL2 GPGPU 双模拟后端（32,768 粒子 @ 120 FPS），力场参数语义共享，`?backend=` 强制覆盖与失败回退。
 - 新增 docs/reports/phase-2.md，记录 ANGLE 下 GLSL3 点材质病理性问题及规避方式。
+- Phase 3：有机形体轮廓（bodyRadius 方向函数）替换球壳；Core/Body/Aura 三层可辨（分层刚度/配色/尺寸/湍流权重）；呼吸驱动核心亮度与外围反相扩散。
+- 启动凝聚编排：粒子逐个显现 → 旋涡收拢 → 约 7.5 秒成形，无位置瞬移；GPU 未捕获校验错误接入诊断通道。
 
 以上为文档初始化，尚未包含应用实现或性能测试结果。

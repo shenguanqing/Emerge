@@ -7,25 +7,40 @@ import { createParticleInitData } from '../particleInit';
  * WebGL2 后端：Three.js 点渲染 + GPUComputationRenderer 做 GPGPU 模拟。
  * 位置/速度保存在浮点纹理中 ping-pong 双缓冲；力语义与 WebGPU 后端一致。
  * 若硬件不支持浮点渲染目标，自动降级 HalfFloat（精度略低但可运行）。
+ * 注意：本环境（ANGLE）下 three 显式 GLSL3 材质有病理性性能问题，
+ * 着色器统一采用 GLSL1 风格（texture2D/varying/gl_FragColor）。
  */
 
 /** 模拟纹理宽度；高度 = ceil(count / 256)。 */
 const SIM_W = 256;
 
-/** 速度更新：力 → 新速度。 */
+/** 速度更新：有机形体锚点 + 分层刚度 + 凝聚旋涡 + 核心吸引 + 湍流。 */
 const VEL_FRAG = /* glsl */ `
 uniform float uDt;
 uniform float uTime;
 uniform float uBreath;
+uniform float uBreathWave;
+uniform float uFormMix;
 uniform vec3 uCore;
 uniform float uShellK;
 uniform float uCoreG;
 uniform float uDamping;
 uniform float uNoiseAmp;
-uniform float uRadiusMin;
-uniform float uRadiusMax;
+uniform float uBodyBase;
+uniform float uSwirlBase;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
+
+// 有机形体半径：随方向低频起伏的非对称轮廓（与 WebGPU 后端保持一致）。
+float bodyRadius(vec3 dir) {
+  float r = 1.0;
+  r += 0.24 * sin(2.3 * dir.x + 1.7) * cos(1.9 * dir.y - 0.6);
+  r += 0.17 * sin(3.1 * dir.z + 4.0);
+  r += 0.11 * sin(4.7 * dir.x + 2.0) * sin(3.9 * dir.y + 1.0);
+  r += 0.09 * sin(6.1 * dir.x + 3.7) * cos(5.7 * dir.z - 1.1);
+  r += 0.07 * sin(2.9 * dir.x + 2.9 * dir.z + 0.5);
+  return r;
+}
 
 void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
@@ -35,27 +50,45 @@ void main() {
   float seed = p4.w;
   vec3 v = v4.xyz;
 
-  // 个体锚点：由种子确定的方向与半径（Phase 3 起替换为有机形体采样）。
+  // 层级由种子确定：0 核心(12%) / 1 身体(74%) / 2 外围(14%)。
+  float layer = seed < 0.12 ? 0.0 : (seed < 0.86 ? 1.0 : 2.0);
+  float h = hash1(seed * 41.53 + 0.37);
+
+  // 个体方向：由种子确定的固定方向。
   float a1 = hash1(seed * 17.31 + 0.13) * 6.2831853;
   float a2 = hash1(seed * 29.17 + 0.71) * 2.0 - 1.0;
   float s2 = sqrt(max(1.0 - a2 * a2, 0.0));
-  float rad = mix(uRadiusMin, uRadiusMax, hash1(seed * 41.53 + 0.37));
-  vec3 anchor = vec3(cos(a1) * s2, sin(a1) * s2, a2) * rad * uBreath;
+  vec3 dir = vec3(cos(a1) * s2, sin(a1) * s2, a2);
 
-  // 锚点弹簧 + 核心长程吸引 + 湍流（Phase 4 换 Curl Noise）。
+  // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
+  float bodyR = bodyRadius(dir) * uBodyBase * uBreath;
+  float radMul = layer < 0.5 ? mix(0.16, 0.34, h)
+               : layer < 1.5 ? mix(0.88, 1.04, h)
+               : mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - uBreathWave));
+  vec3 anchor = dir * bodyR * radMul;
+
+  float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
   vec3 target = uCore + anchor;
-  vec3 force = (target - p) * uShellK;
+  vec3 force = (target - p) * (uShellK * stiffMul);
 
+  // 核心长程吸引。
   vec3 toCore = uCore - p;
   float dist = length(toCore) + 0.25;
   force += (toCore / dist) * (uCoreG / dist);
 
+  // 凝聚期旋涡：绕竖轴的切向力，离核越远越强，随成形衰减消失。
+  float swirl = (1.0 - uFormMix) * uSwirlBase;
+  vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), toCore) + vec3(1e-5, 0.0, 0.0));
+  force += tangent * swirl * smoothstep(5.0, 0.5, dist);
+
+  // 湍流（Phase 4 换 Curl Noise）：外围更活跃。
   float t = uTime * 0.6 + seed * 12.0;
   vec3 turb = vec3(
     sin(t * 1.1 + p.y * 1.3),
     sin(t * 1.3 + p.z * 1.1),
     sin(t * 1.7 + p.x * 0.9));
-  force += turb * uNoiseAmp;
+  float turbMul = layer < 0.5 ? 0.5 : (layer < 1.5 ? 1.0 : 1.6);
+  force += turb * (uNoiseAmp * turbMul);
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   vec3 nv = (v + force * uDt) * exp(-uDamping * uDt);
@@ -81,35 +114,60 @@ uniform sampler2D uPosTex;
 uniform vec2 uSimSize;
 uniform float uPointSize;
 uniform float uPixelRatio;
+uniform float uRevealT;
+uniform float uRevealSeconds;
+uniform float uFormMix;
 attribute float aRef;
 varying float vGlow;
+varying float vAlpha;
+varying float vLayer;
 
 void main() {
   float ref = aRef + 0.5;
   vec2 uv = vec2(mod(ref, uSimSize.x), floor(ref / uSimSize.x)) / uSimSize;
   vec4 p4 = texture2D(uPosTex, uv);
-  vec4 mv = modelViewMatrix * vec4(p4.xyz, 1.0);
+  vec3 p = p4.xyz;
+  float seed = p4.w;
+  float layer = seed < 0.12 ? 0.0 : (seed < 0.86 ? 1.0 : 2.0);
+
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   float depthFade = clamp(2.5 / max(-mv.z, 0.001), 0.2, 2.0);
-  gl_PointSize = uPointSize * uPixelRatio * depthFade;
+
+  // 逐个显现：t0 = seed × revealSeconds，0.8 秒平滑淡入。
+  float t0 = seed * uRevealSeconds;
+  float reveal = clamp((uRevealT - t0) / 0.8, 0.0, 1.0);
+  reveal = reveal * reveal * (3.0 - 2.0 * reveal);
+
+  float sizeMul = (layer < 0.5 ? 1.5 : (layer < 1.5 ? 1.0 : 0.9)) * mix(1.35, 1.0, uFormMix);
+  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul;
   vGlow = depthFade;
+  vLayer = layer;
+  vAlpha = reveal * mix(0.7, 1.0, uFormMix);
 }
 `;
 
 const POINTS_FRAG = /* glsl */ `
 precision mediump float;
+uniform float uBreathWave;
 varying float vGlow;
+varying float vAlpha;
+varying float vLayer;
 
 void main() {
   vec2 uv = gl_PointCoord - 0.5;
   float d = length(uv);
   float a = smoothstep(0.5, 0.12, d);
   a = 0.30 + 0.70 * a * a;
-  // 克制的冷蓝辉光：外围偏深蓝，近处微亮白，避免霓虹堆砌。
-  vec3 cool = vec3(0.38, 0.58, 0.92);
-  vec3 bright = vec3(0.85, 0.93, 1.0);
-  vec3 col = mix(cool, bright, clamp(vGlow * 0.45, 0.0, 1.0)) * 1.6;
-  gl_FragColor = vec4(col * a, a);
+
+  // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
+  vec3 coreCol = vec3(0.90, 0.95, 1.0) * (1.6 + 1.0 * uBreathWave);
+  vec3 bodyCol = vec3(0.42, 0.62, 0.95) * 1.35;
+  vec3 auraCol = vec3(0.24, 0.40, 0.75) * 0.8;
+  vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
+  float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55);
+  col *= (0.85 + 0.15 * vGlow);
+  gl_FragColor = vec4(col * a, a * vAlpha * layerAlpha);
 }
 `;
 
@@ -118,8 +176,6 @@ type SimVariable = ReturnType<GPUComputationRenderer['addVariable']>;
 export class WebGL2Backend {
   readonly id = 'webgl2' as const;
   readonly particleCount: number;
-  /** 分段帧耗时（毫秒），用于诊断覆盖层与性能回归排查。 */
-  readonly timings = { computeMs: 0, renderMs: 0 };
   private readonly simH: number;
 
   private readonly renderer: THREE.WebGLRenderer;
@@ -169,17 +225,19 @@ export class WebGL2Backend {
     this.gpu.setVariableDependencies(this.posVar, [this.posVar, this.velVar]);
     this.gpu.setVariableDependencies(this.velVar, [this.posVar, this.velVar]);
 
-    const shared: Record<string, { value: unknown }> = {
+    const shared: Record<string, { value: number | THREE.Vector3 }> = {
       uDt: { value: 0 },
       uTime: { value: 0 },
       uBreath: { value: 1 },
+      uBreathWave: { value: 0 },
+      uFormMix: { value: 0 },
       uCore: { value: new THREE.Vector3() },
       uShellK: { value: this.sim.shellStiffness },
       uCoreG: { value: this.sim.coreGravity },
       uDamping: { value: this.sim.damping },
       uNoiseAmp: { value: this.sim.turbulenceAmp },
-      uRadiusMin: { value: this.sim.radiusMin },
-      uRadiusMax: { value: this.sim.radiusMax },
+      uBodyBase: { value: this.sim.bodyBase },
+      uSwirlBase: { value: this.sim.swirlBase },
     };
     Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
     Object.assign(this.velVar.material.uniforms, shared);
@@ -198,7 +256,7 @@ export class WebGL2Backend {
     const refs = new Float32Array(params.particleCount);
     for (let i = 0; i < params.particleCount; i += 1) refs[i] = i;
     this.geometry.setAttribute('aRef', new THREE.BufferAttribute(refs, 1));
-    this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 10);
+    this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 12);
 
     this.material = new THREE.ShaderMaterial({
       uniforms: {
@@ -206,6 +264,10 @@ export class WebGL2Backend {
         uSimSize: { value: new THREE.Vector2(SIM_W, this.simH) },
         uPointSize: { value: params.pointSize },
         uPixelRatio: { value: 1 },
+        uRevealT: { value: 0 },
+        uRevealSeconds: { value: params.revealSeconds },
+        uFormMix: { value: 0 },
+        uBreathWave: { value: 0 },
       },
       vertexShader: POINTS_VERT,
       fragmentShader: POINTS_FRAG,
@@ -228,6 +290,8 @@ export class WebGL2Backend {
     u.uDt.value = dt;
     u.uTime.value = state.time;
     u.uBreath.value = state.breathScale;
+    u.uBreathWave.value = state.breathWave;
+    u.uFormMix.value = state.formMix;
     (u.uCore.value as THREE.Vector3).set(
       state.corePosition[0],
       state.corePosition[1],
@@ -235,13 +299,14 @@ export class WebGL2Backend {
     );
     this.posVar.material.uniforms.uDt.value = dt;
 
-    let t0 = performance.now();
+    const m = this.material.uniforms;
+    m.uRevealT.value = state.revealT;
+    m.uFormMix.value = state.formMix;
+    m.uBreathWave.value = state.breathWave;
+
     this.gpu.compute();
-    this.timings.computeMs = performance.now() - t0;
-    this.material.uniforms.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
-    t0 = performance.now();
+    m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
     this.renderer.render(this.scene, this.camera);
-    this.timings.renderMs = performance.now() - t0;
   }
 
   resize(width: number, height: number, dpr: number): void {

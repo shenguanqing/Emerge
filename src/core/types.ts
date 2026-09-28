@@ -18,6 +18,10 @@ export interface LifeParams {
   driftRadius: number;
   /** 粒子基础尺寸（像素，渲染时乘 DPR 与深度衰减）。 */
   pointSize: number;
+  /** 启动凝聚时长（秒）：旋涡收拢到成形。 */
+  coalesceSeconds: number;
+  /** 粒子逐个显现的总时长（秒）。 */
+  revealSeconds: number;
 }
 
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
@@ -27,6 +31,10 @@ export const DEFAULT_LIFE_PARAMS: LifeParams = {
   driftSpeed: 0.22,
   driftRadius: 0.35,
   pointSize: 3.0,
+  /** 启动凝聚时长（秒）：旋涡收拢到成形。 */
+  coalesceSeconds: 7.5,
+  /** 粒子逐个显现的总时长（秒）。 */
+  revealSeconds: 3.2,
 };
 
 /**
@@ -34,7 +42,7 @@ export const DEFAULT_LIFE_PARAMS: LifeParams = {
  * 力的定义在各自 shader 中保持一致。
  */
 export interface SimulationParams {
-  /** 锚点弹簧刚度：粒子被拉向「核心 + 个体锚点」的目标位。 */
+  /** 锚点弹簧刚度（按层级再加权：核心×3.2 / 身体×1.0 / 外围×0.55）。 */
   shellStiffness: number;
   /** 核心长程吸引（1/dist 衰减）。 */
   coreGravity: number;
@@ -42,9 +50,10 @@ export interface SimulationParams {
   damping: number;
   /** 湍流幅度（Phase 2 为三角函数近似，Phase 4 换成 Curl Noise）。 */
   turbulenceAmp: number;
-  /** 个体锚点半径范围（世界单位），Phase 3 改为有机形体采样。 */
-  radiusMin: number;
-  radiusMax: number;
+  /** 有机形体基础半径（世界单位），形体函数在 shader 内定义。 */
+  bodyBase: number;
+  /** 凝聚期旋涡切向力基准强度（随 formMix 衰减到 0）。 */
+  swirlBase: number;
 }
 
 export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
@@ -52,8 +61,8 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
   coreGravity: 0.18,
   damping: 1.6,
   turbulenceAmp: 0.35,
-  radiusMin: 1.25,
-  radiusMax: 2.2,
+  bodyBase: 1.35,
+  swirlBase: 2.6,
 };
 
 /** 生命引擎每帧输出的只读快照；渲染层只消费，不回写。 */
@@ -64,10 +73,24 @@ export interface LifeState {
   breathPhase: number;
   /** 呼吸缩放系数 1 → 1 + breathAmplitude → 1 平滑循环。 */
   breathScale: number;
+  /** 呼吸波形 0..1（0.5 − 0.5·cos breathPhase），供亮度/外围相位使用。 */
+  breathWave: number;
   /** 核心宏观位置（自主漂移中心，xyz 世界单位）。 */
   corePosition: [number, number, number];
+  /** 凝聚进度 0（松散旋涡）→ 1（成形），驱动旋涡力衰减。 */
+  formMix: number;
+  /** 启动以来经过的秒数，驱动粒子逐个显现。 */
+  revealT: number;
 }
 
 export function createLifeState(): LifeState {
-  return { time: 0, breathPhase: 0, breathScale: 1, corePosition: [0, 0, 0] };
+  return {
+    time: 0,
+    breathPhase: 0,
+    breathScale: 1,
+    breathWave: 0,
+    corePosition: [0, 0, 0],
+    formMix: 0,
+    revealT: 0,
+  };
 }

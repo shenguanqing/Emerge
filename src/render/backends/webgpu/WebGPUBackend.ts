@@ -11,8 +11,9 @@ const COMPUTE_WGSL = /* wgsl */ `
 struct Sim {
   data0: vec4f,          // dt, time, breath, damping
   core_shellK: vec4f,    // core.xyz, shellK
-  data2: vec4f,          // coreG, noiseAmp, radiusMin, radiusMax
+  data2: vec4f,          // coreG, noiseAmp, bodyBase, swirlBase
   data3: vec4f,          // count, pad, pad, pad
+  data4: vec4f,          // formMix, breathWave, revealT, revealSeconds
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -22,6 +23,17 @@ struct Sim {
 @group(0) @binding(4) var<uniform> sim: Sim;
 
 fn hash1(n: f32) -> f32 { return fract(sin(n) * 43758.5453123); }
+
+// 有机形体半径：随方向低频起伏的非对称轮廓（与 WebGL2 后端保持一致）。
+fn bodyRadius(dir: vec3f) -> f32 {
+  var r = 1.0;
+  r = r + 0.24 * sin(2.3 * dir.x + 1.7) * cos(1.9 * dir.y - 0.6);
+  r = r + 0.17 * sin(3.1 * dir.z + 4.0);
+  r = r + 0.11 * sin(4.7 * dir.x + 2.0) * sin(3.9 * dir.y + 1.0);
+  r = r + 0.09 * sin(6.1 * dir.x + 3.7) * cos(5.7 * dir.z - 1.1);
+  r = r + 0.07 * sin(2.9 * dir.x + 2.9 * dir.z + 0.5);
+  return r;
+}
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
@@ -43,28 +55,55 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let shellK = sim.core_shellK.w;
   let coreG = sim.data2.x;
   let noiseAmp = sim.data2.y;
-  let rMin = sim.data2.z;
-  let rMax = sim.data2.w;
+  let bodyBase = sim.data2.z;
+  let swirlBase = sim.data2.w;
+  let formMix = sim.data4.x;
+  let breathWave = sim.data4.y;
 
-  // 个体锚点：由种子确定的方向与半径（Phase 3 起替换为有机形体采样）。
+  // 层级由种子确定：0 核心(12%) / 1 身体(74%) / 2 外围(14%)。
+  let layer = select(select(2.0, 1.0, seed < 0.86), 0.0, seed < 0.12);
+  let h = hash1(seed * 41.53 + 0.37);
+
+  // 个体方向：由种子确定的固定方向。
   let a1 = hash1(seed * 17.31 + 0.13) * 6.2831853;
   let a2 = hash1(seed * 29.17 + 0.71) * 2.0 - 1.0;
   let s2 = sqrt(max(1.0 - a2 * a2, 0.0));
-  let rad = mix(rMin, rMax, hash1(seed * 41.53 + 0.37));
-  let anchor = vec3f(cos(a1) * s2, sin(a1) * s2, a2) * rad * breath;
+  let dir = vec3f(cos(a1) * s2, sin(a1) * s2, a2);
 
-  // 锚点弹簧 + 核心长程吸引 + 湍流（Phase 4 换 Curl Noise）。
-  var force = (core + anchor - p) * shellK;
+  // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
+  let bodyR = bodyRadius(dir) * bodyBase * breath;
+  var radMul = mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - breathWave));
+  if (layer < 0.5) { radMul = mix(0.16, 0.34, h); }
+  if (layer > 0.5 && layer < 1.5) { radMul = mix(0.88, 1.04, h); }
+  let anchor = dir * bodyR * radMul;
+
+  var stiffMul = 0.55;
+  if (layer < 0.5) { stiffMul = 3.2; }
+  if (layer > 0.5 && layer < 1.5) { stiffMul = 1.0; }
+
+  let goal = core + anchor;
+  var force = (goal - p) * (shellK * stiffMul);
+
+  // 核心长程吸引。
   let toCore = core - p;
   let dist = length(toCore) + 0.25;
   force = force + (toCore / dist) * (coreG / dist);
 
+  // 凝聚期旋涡：绕竖轴的切向力，离核越远越强，随成形衰减消失。
+  let swirl = (1.0 - formMix) * swirlBase;
+  let tangent = normalize(cross(vec3f(0.0, 1.0, 0.0), toCore) + vec3f(1e-5, 0.0, 0.0));
+  force = force + tangent * swirl * smoothstep(5.0, 0.5, dist);
+
+  // 湍流（Phase 4 换 Curl Noise）：外围更活跃。
   let t = time * 0.6 + seed * 12.0;
   let turb = vec3f(
     sin(t * 1.1 + p.y * 1.3),
     sin(t * 1.3 + p.z * 1.1),
     sin(t * 1.7 + p.x * 0.9));
-  force = force + turb * noiseAmp;
+  var turbMul = 1.6;
+  if (layer < 0.5) { turbMul = 0.5; }
+  if (layer > 0.5 && layer < 1.5) { turbMul = 1.0; }
+  force = force + turb * (noiseAmp * turbMul);
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   v = (v + force * dt) * exp(-damping * dt);
@@ -79,6 +118,7 @@ const RENDER_WGSL = /* wgsl */ `
 struct R {
   vp: mat4x4f,
   data: vec4f,           // pointSizePx, viewportW, viewportH, unused
+  data2: vec4f,          // formMix, breathWave, revealT, revealSeconds
 };
 
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
@@ -87,19 +127,37 @@ struct R {
 struct VOut {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
+  @location(1) @interpolate(flat) layer: f32,
+  @location(2) alpha: f32,
 };
 
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   let corner = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
   let p4 = pos[ii];
+  let seed = p4.w;
+  let layer = select(select(2.0, 1.0, seed < 0.86), 0.0, seed < 0.12);
+
   let clip = r.vp * vec4f(p4.xyz, 1.0);
   let depthFade = clamp(2.5 / max(clip.w, 0.001), 0.2, 2.0);
-  let pointPx = r.data.x * depthFade;
+
+  // 逐个显现：t0 = seed × revealSeconds，0.8 秒平滑淡入。
+  let t0 = seed * r.data2.w;
+  var reveal = clamp((r.data2.z - t0) / 0.8, 0.0, 1.0);
+  reveal = reveal * reveal * (3.0 - 2.0 * reveal);
+
+  var sizeMul = 0.9;
+  if (layer < 0.5) { sizeMul = 1.5; }
+  if (layer > 0.5 && layer < 1.5) { sizeMul = 1.0; }
+  sizeMul = sizeMul * mix(1.35, 1.0, r.data2.x);
+  let pointPx = r.data.x * depthFade * sizeMul;
   let halfNdc = corner * (pointPx / vec2f(r.data.y, r.data.z));
+
   var result: VOut;
   result.position = vec4f(clip.xy + halfNdc * clip.w, clip.z, clip.w);
   result.uv = corner;
+  result.layer = layer;
+  result.alpha = reveal * mix(0.7, 1.0, r.data2.x);
   return result;
 }
 
@@ -108,12 +166,19 @@ fn fs(vin: VOut) -> @location(0) vec4f {
   let d = length(vin.uv);
   var a = smoothstep(1.0, 0.24, d);
   a = 0.30 + 0.70 * a * a;
-  // 克制的冷蓝辉光：外围偏深蓝，近处微亮白，避免霓虹堆砌。
-  let cool = vec3f(0.38, 0.58, 0.92) * 1.6;
-  let bright = vec3f(0.85, 0.93, 1.0) * 1.6;
+
+  // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
+  let breathWave = r.data2.y;
+  let coreCol = vec3f(0.90, 0.95, 1.0) * (1.6 + 1.0 * breathWave);
+  let bodyCol = vec3f(0.42, 0.62, 0.95) * 1.35;
+  let auraCol = vec3f(0.24, 0.40, 0.75) * 0.8;
+  var col = auraCol;
+  var layerAlpha = 0.55;
+  if (vin.layer < 0.5) { col = coreCol; layerAlpha = 1.0; }
+  if (vin.layer > 0.5 && vin.layer < 1.5) { col = bodyCol; layerAlpha = 0.85; }
   let depthFade = clamp(2.5 / max(vin.position.w, 0.001), 0.2, 2.0);
-  let col = mix(cool, bright, clamp(depthFade * 0.45, 0.0, 1.0));
-  return vec4f(col * a, a);
+  let glow = col * (0.85 + 0.15 * depthFade);
+  return vec4f(glow * a, a * vin.alpha * layerAlpha);
 }
 `;
 
@@ -161,11 +226,10 @@ export class WebGPUBackend {
   private readonly renderPipeline: GPURenderPipeline;
   private readonly computeBinds: [GPUBindGroup, GPUBindGroup];
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
-  /** [0..15] VP 矩阵；[16..19] pointSizePx, viewportW, viewportH, unused。 */
-  private readonly renderData = new Float32Array(20);
-  private readonly simData = new Float32Array(16);
+  /** [0..15] VP 矩阵；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds。 */
+  private readonly renderData = new Float32Array(24);
+  private readonly simData = new Float32Array(20);
   private readonly pointSize: number;
-  private dpr = 1;
   private readIdx = 0;
   private disposed = false;
 
@@ -174,7 +238,7 @@ export class WebGPUBackend {
     context: GPUCanvasContext,
     format: GPUTextureFormat,
     canvas: HTMLCanvasElement,
-    params: LifeParams,
+    private readonly params: LifeParams,
     private readonly sim: SimulationParams,
   ) {
     this.device = device;
@@ -197,11 +261,11 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 64,
+      size: 80,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
-      size: 80,
+      size: 96,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -252,9 +316,16 @@ export class WebGPUBackend {
       });
     this.renderBinds = [mkRenderBind(0), mkRenderBind(1)];
 
+    this.updateCameraUniform();
+
     void device.lost.then(() => {
       this.disposed = true;
     });
+    // 未捕获的管线/着色器校验错误上抛到诊断通道，避免静默黑屏。
+    device.onuncapturederror = (ev) => {
+      const w = window as typeof window & { __emergeErrors?: string[] };
+      w.__emergeErrors?.push(`GPU: ${ev.error.message.slice(0, 300)}`);
+    };
   }
 
   /** 探测并创建后端；任何失败返回 null（上层回退 WebGL2）。 */
@@ -288,12 +359,6 @@ export class WebGPUBackend {
     this.renderData.set(mat4Multiply(proj, view), 0);
   }
 
-  private updateSizeUniform(): void {
-    this.renderData[16] = this.pointSize * this.dpr;
-    this.renderData[17] = this.canvas.width;
-    this.renderData[18] = this.canvas.height;
-  }
-
   /** 每帧执行一次 Compute 步进并渲染。 */
   frame(state: LifeState, dt: number): void {
     if (this.disposed) return;
@@ -309,11 +374,17 @@ export class WebGPUBackend {
     this.simData[7] = this.sim.shellStiffness;
     this.simData[8] = this.sim.coreGravity;
     this.simData[9] = this.sim.turbulenceAmp;
-    this.simData[10] = this.sim.radiusMin;
-    this.simData[11] = this.sim.radiusMax;
+    this.simData[10] = this.sim.bodyBase;
+    this.simData[11] = this.sim.swirlBase;
     this.simData[12] = this.particleCount;
+    this.simData[16] = state.formMix;
+    this.simData[17] = state.breathWave;
     d.queue.writeBuffer(this.simUniform, 0, this.simData);
 
+    this.renderData[20] = state.formMix;
+    this.renderData[21] = state.breathWave;
+    this.renderData[22] = state.revealT;
+    this.renderData[23] = this.params.revealSeconds;
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 
     const read = this.readIdx;
@@ -349,8 +420,9 @@ export class WebGPUBackend {
   resize(width: number, height: number, dpr: number): void {
     this.canvas.width = Math.max(1, Math.floor(width * dpr));
     this.canvas.height = Math.max(1, Math.floor(height * dpr));
-    this.dpr = dpr;
-    this.updateSizeUniform();
+    this.renderData[16] = this.pointSize * dpr;
+    this.renderData[17] = this.canvas.width;
+    this.renderData[18] = this.canvas.height;
     this.updateCameraUniform();
   }
 

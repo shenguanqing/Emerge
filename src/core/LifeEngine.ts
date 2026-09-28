@@ -21,12 +21,20 @@ export class LifeEngine {
   update(dtSeconds: number): void {
     const dt = Math.min(Math.max(dtSeconds, 0), 0.1);
     this.state.time += dt;
+    this.state.revealT += dt;
 
     // 呼吸：相位连续累积，缩放 = 1 + amplitude · (0.5 − 0.5·cos 2π·rate·t)，
     // 平滑经过 1 → 1+amp → 1，无硬切换。
     this.state.breathPhase = this.params.breathRate * this.state.time * Math.PI * 2;
-    this.state.breathScale =
-      1 + this.params.breathAmplitude * (0.5 - 0.5 * Math.cos(this.state.breathPhase));
+    this.state.breathWave = 0.5 - 0.5 * Math.cos(this.state.breathPhase);
+    this.state.breathScale = 1 + this.params.breathAmplitude * this.state.breathWave;
+
+    // 启动凝聚：0.8s 黑场铺垫后旋涡收拢，smoothstep 缓入缓出。
+    const raw = Math.min(
+      Math.max((this.state.revealT - 0.8) / this.params.coalesceSeconds, 0),
+      1,
+    );
+    this.state.formMix = raw * raw * (3 - 2 * raw);
 
     // 核心自主漂移：慢速三轴 Lissajous 游走（Phase 7 由行为系统接管驱动）。
     const t = this.state.time * this.params.driftSpeed;
