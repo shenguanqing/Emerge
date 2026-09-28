@@ -15,6 +15,7 @@
 | [reports/phase-3.md](reports/phase-3.md) | Phase 3 交付记录（基础形态与启动凝聚） |
 | [reports/phase-4.md](reports/phase-4.md) | Phase 4 交付记录（Curl Noise 流场） |
 | [reports/phase-5.md](reports/phase-5.md) | Phase 5 交付记录（指针力场与感知延迟） |
+| [reports/phase-6.md](reports/phase-6.md) | Phase 6 交付记录（驱散与重新聚合） |
 | [decisions/0001-technical-direction.md](decisions/0001-technical-direction.md) | 初始技术选择及待验证风险 |
 | [ORIGINAL_BRIEF.md](ORIGINAL_BRIEF.md) | 用户原始需求存档 |
 

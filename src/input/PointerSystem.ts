@@ -15,6 +15,7 @@ export class PointerSystem {
   private lastX = 0;
   private lastY = 0;
   private lastTime = 0;
+  private sinceMove = 0;
 
   /** 相机常量：与渲染后端保持一致（fov 50°，相机在 z=7）。 */
   private static readonly FOV_Y = (50 * Math.PI) / 180;
@@ -58,7 +59,23 @@ export class PointerSystem {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
     this.lastTime = now;
+    this.sinceMove = 0;
   };
+
+  /**
+   * 每帧调用：指针停止移动时速度自然衰减到 0。
+   * 若不衰减，最后一次移动的速度会永久冻结，导致生命体持续受惊。
+   */
+  tick(dt: number): void {
+    this.sinceMove += dt;
+    if (this.sinceMove > 0.06) {
+      const k = Math.exp(-dt / 0.12);
+      this.velocity.x *= k;
+      this.velocity.y *= k;
+      if (Math.abs(this.velocity.x) < 0.01) this.velocity.x = 0;
+      if (Math.abs(this.velocity.y) < 0.01) this.velocity.y = 0;
+    }
+  }
 
   private readonly onEnter = () => {
     this.inCanvas = true;

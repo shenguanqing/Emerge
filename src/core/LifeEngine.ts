@@ -14,6 +14,8 @@ export class LifeEngine {
     world: [0, 0, 99],
     worldVel: [0, 0, 0],
   };
+  private scatter = 0;
+  private wary = 0;
 
   constructor(private readonly params: LifeParams) {
     this.state = createLifeState();
@@ -41,6 +43,21 @@ export class LifeEngine {
     this.state.pointerPos = perceived.world;
     this.state.pointerVel = perceived.worldVel;
     this.state.pointerActive = this.perception.activityLevel;
+
+    // 受惊散开：感知指针速度超过阈值时快速上升，随后指数消退；
+    // 刚度在消退中逐渐恢复，形成 2–4 秒的旋涡式重组。
+    const speed = Math.hypot(perceived.worldVel[0], perceived.worldVel[1], perceived.worldVel[2]);
+    const shock = Math.max(0, speed - this.params.scatterSpeed) / this.params.scatterSpeed;
+    if (shock > 0) {
+      this.scatter = Math.min(1, this.scatter + shock * dt * 4);
+      this.wary = Math.max(this.wary, Math.min(1, shock));
+    }
+    this.scatter *= Math.exp(-dt / this.params.scatterRecoverTau);
+    if (this.scatter < 0.005) this.scatter = 0;
+    this.wary *= Math.exp(-dt / this.params.waryTau);
+    if (this.wary < 0.005) this.wary = 0;
+    this.state.scatter = this.scatter;
+    this.state.wary = this.wary;
 
     // 呼吸：相位连续累积，缩放 = 1 + amplitude · (0.5 − 0.5·cos 2π·rate·t)，
     // 平滑经过 1 → 1+amp → 1，无硬切换。

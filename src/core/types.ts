@@ -22,6 +22,12 @@ export interface LifeParams {
   coalesceSeconds: number;
   /** 粒子逐个显现的总时长（秒）。 */
   revealSeconds: number;
+  /** 触发受惊散开的感知指针速度阈值（世界单位/秒）。 */
+  scatterSpeed: number;
+  /** 散开消退时间常数（秒）；锚点刚度随之恢复，重组约 2–4 秒。 */
+  scatterRecoverTau: number;
+  /** 警觉消退时间常数（秒）：受惊后保持更远距离。 */
+  waryTau: number;
 }
 
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
@@ -35,6 +41,9 @@ export const DEFAULT_LIFE_PARAMS: LifeParams = {
   coalesceSeconds: 7.5,
   /** 粒子逐个显现的总时长（秒）。 */
   revealSeconds: 3.2,
+  scatterSpeed: 3.0,
+  scatterRecoverTau: 1.1,
+  waryTau: 6.0,
 };
 
 /**
@@ -99,6 +108,10 @@ export interface LifeState {
   formMix: number;
   /** 启动以来经过的秒数，驱动粒子逐个显现。 */
   revealT: number;
+  /** 受惊散开程度 0..1（强冲击触发，随时间消退）。 */
+  scatter: number;
+  /** 警觉程度 0..1（受惊后保持更远距离，消退更慢）。 */
+  wary: number;
   /** 感知到的指针位置（世界坐标，含反应延迟）。 */
   pointerPos: [number, number, number];
   /** 感知到的指针速度（世界单位/秒）。 */
@@ -116,6 +129,8 @@ export function createLifeState(): LifeState {
     corePosition: [0, 0, 0],
     formMix: 0,
     revealT: 0,
+    scatter: 0,
+    wary: 0,
     pointerPos: [0, 0, 99],
     pointerVel: [0, 0, 0],
     pointerActive: 0,

@@ -18,6 +18,7 @@ struct Sim {
   pointerPos_act: vec4f, // pointer.xyz, active(0..1)
   pointerVel_pad: vec4f, // pointerVel.xyz, pad
   data6: vec4f,          // pointerRadius, pointerPush, impactSpeed, impactPush
+  data7: vec4f,          // scatter, wary, pad, pad
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -159,8 +160,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   if (layer < 0.5) { stiffMul = 3.2; }
   if (layer > 0.5 && layer < 1.5) { stiffMul = 1.0; }
 
+  // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
+  var softMul = mix(1.0, 0.15, sim.data7.x);
+  if (layer < 0.5) { softMul = mix(1.0, 0.6, sim.data7.x); }
   let goal = core + anchor;
-  var force = (goal - p) * (shellK * stiffMul);
+  var force = (goal - p) * (shellK * stiffMul * softMul);
 
   // 核心长程吸引。
   let toCore = core - p;
@@ -168,7 +172,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   force = force + (toCore / dist) * (coreG / dist);
 
   // 凝聚期旋涡：绕竖轴的切向力，离核越远越强，随成形衰减消失。
-  let swirl = (1.0 - formMix) * swirlBase;
+  let swirl = max(1.0 - formMix, sim.data7.x * 0.85) * swirlBase;
   let tangent = normalize(cross(vec3f(0.0, 1.0, 0.0), toCore) + vec3f(1e-5, 0.0, 0.0));
   force = force + tangent * swirl * smoothstep(5.0, 0.5, dist);
 
@@ -187,7 +191,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     let away = -toP / dP;
     let speed = length(sim.pointerVel_pad.xyz);
     let impact = smoothstep(sim.data6.z, sim.data6.z * 2.5, speed) * influence;
-    force = force + away * (influence * sim.data6.y + impact * sim.data6.w * 3.0);
+    let waryMul = 1.0 + sim.data7.y * 0.6;
+    force = force + away * (influence * sim.data6.y * waryMul + impact * sim.data6.w * 3.0);
     force = force + sim.pointerVel_pad.xyz * impact * 0.9;
   }
 
@@ -314,7 +319,7 @@ export class WebGPUBackend {
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
   /** [0..15] VP 矩阵；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds。 */
   private readonly renderData = new Float32Array(24);
-  private readonly simData = new Float32Array(44);
+  private readonly simData = new Float32Array(52);
   private readonly pointSize: number;
   private readIdx = 0;
   private disposed = false;
@@ -347,7 +352,7 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 176,
+      size: 208,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
@@ -478,6 +483,8 @@ export class WebGPUBackend {
     this.simData[33] = this.sim.pointerPush;
     this.simData[34] = this.sim.impactSpeed;
     this.simData[35] = this.sim.impactPush;
+    this.simData[40] = state.scatter;
+    this.simData[41] = state.wary;
     d.queue.writeBuffer(this.simUniform, 0, this.simData);
 
     this.renderData[20] = state.formMix;

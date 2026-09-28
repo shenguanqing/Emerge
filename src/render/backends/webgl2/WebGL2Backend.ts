@@ -37,6 +37,8 @@ uniform float uPointerRadius;
 uniform float uPointerPush;
 uniform float uImpactSpeed;
 uniform float uImpactPush;
+uniform float uScatter;
+uniform float uWary;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -149,16 +151,18 @@ void main() {
   vec3 anchor = dir * bodyR * radMul;
 
   float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
+  // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
+  float softMul = layer < 0.5 ? mix(1.0, 0.6, uScatter) : mix(1.0, 0.15, uScatter);
   vec3 target = uCore + anchor;
-  vec3 force = (target - p) * (uShellK * stiffMul);
+  vec3 force = (target - p) * (uShellK * stiffMul * softMul);
 
   // 核心长程吸引。
   vec3 toCore = uCore - p;
   float dist = length(toCore) + 0.25;
   force += (toCore / dist) * (uCoreG / dist);
 
-  // 凝聚期旋涡：绕竖轴的切向力，离核越远越强，随成形衰减消失。
-  float swirl = (1.0 - uFormMix) * uSwirlBase;
+  // 旋涡：凝聚期与受惊重组期共用——粒子绕核回旋后自然归位。
+  float swirl = max(1.0 - uFormMix, uScatter * 0.85) * uSwirlBase;
   vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), toCore) + vec3(1e-5, 0.0, 0.0));
   force += tangent * swirl * smoothstep(5.0, 0.5, dist);
 
@@ -176,7 +180,9 @@ void main() {
     vec3 away = -toP / dP;
     float speed = length(uPointerVel);
     float impact = smoothstep(uImpactSpeed, uImpactSpeed * 2.5, speed) * influence;
-    force += away * (influence * uPointerPush + impact * uImpactPush * 3.0);
+    // 警觉期：影响半径与排斥略增，保持更远距离（缓慢消退）。
+    float waryMul = 1.0 + uWary * 0.6;
+    force += away * (influence * uPointerPush * waryMul + impact * uImpactPush * 3.0);
     force += uPointerVel * impact * 0.9;
   }
 
@@ -337,6 +343,8 @@ export class WebGL2Backend {
       uPointerPush: { value: this.sim.pointerPush },
       uImpactSpeed: { value: this.sim.impactSpeed },
       uImpactPush: { value: this.sim.impactPush },
+      uScatter: { value: 0 },
+      uWary: { value: 0 },
     };
     Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
     Object.assign(this.velVar.material.uniforms, shared);
@@ -407,6 +415,8 @@ export class WebGL2Backend {
       state.pointerVel[2],
     );
     u.uPointerActive.value = state.pointerActive;
+    u.uScatter.value = state.scatter;
+    u.uWary.value = state.wary;
     this.posVar.material.uniforms.uDt.value = dt;
 
     const m = this.material.uniforms;

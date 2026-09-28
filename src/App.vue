@@ -116,6 +116,7 @@ onMounted(async () => {
       fpsFrames = 0;
     }
 
+    inputPointer.tick(dt);
     lifeEngine.setPointer(inputPointer.getReading());
     lifeEngine.update(dt);
     activeBackend.frame(lifeEngine.getState(), dt);
