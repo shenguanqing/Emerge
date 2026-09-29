@@ -315,6 +315,8 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="stage">
+    <!-- 顶部拖拽条：无边框窗口的移动把手（Tauri drag-region） -->
+    <div class="drag-strip" data-tauri-drag-region title="拖动窗口"></div>
     <canvas ref="canvasRef" class="stage-canvas"></canvas>
     <Diagnostics
       :backend="diag.backend"
@@ -356,5 +358,23 @@ html.desktop-transparent body {
   display: block;
   width: 100%;
   height: 100%;
+}
+/* 无边框窗口的拖拽把手：顶部 22px，悬停时显示握把纹理 */
+.drag-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  cursor: grab;
+  z-index: 10;
+}
+.drag-strip:hover {
+  background:
+    radial-gradient(circle at 6px 50%, rgba(160, 200, 255, 0.35) 1.5px, transparent 2px) 0 0 / 14px 8px repeat-x,
+    linear-gradient(rgba(120, 160, 220, 0.08), rgba(120, 160, 220, 0.02));
+}
+.drag-strip:active {
+  cursor: grabbing;
 }
 </style>

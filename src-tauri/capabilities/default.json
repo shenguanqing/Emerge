@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Emerge 主窗口能力：窗口拖拽等核心权限",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

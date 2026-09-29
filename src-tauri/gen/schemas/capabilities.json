@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Emerge 主窗口能力：窗口拖拽等核心权限","local":true,"windows":["main"],"permissions":["core:default"]}}
