@@ -16,6 +16,8 @@ import { GrowthEngine } from './core/GrowthEngine';
 import { clearLife, defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
 import { LifeClock } from './core/LifeClock';
 import DebugPanel from './ui/DebugPanel.vue';
+import MusicControl from './ui/MusicControl.vue';
+import type { MusicFeatures } from './input/AudioSystem';
 import Diagnostics from './ui/Diagnostics.vue';
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -33,6 +35,10 @@ const diag = reactive({
 
 const quality = new QualityManager();
 const debugMode = ref(false);
+let musicFeatures: MusicFeatures | null = null;
+function onMusic(f: unknown): void {
+  musicFeatures = f as MusicFeatures;
+}
 
 type Backend = WebGL2Backend | WebGPUBackend;
 
@@ -271,6 +277,7 @@ onMounted(async () => {
     lifeEngine.setPress(inputPointer.isPressing());
     const click = inputPointer.consumeClick();
     if (click) lifeEngine.click(click.x, click.y, click.z);
+    if (musicFeatures) lifeEngine.setMusic(musicFeatures);
     lifeEngine.update(simDt);
     activeBackend.frame(lifeEngine.getState(), simDt);
   };
@@ -320,6 +327,7 @@ onBeforeUnmount(() => {
       :target-fps="diag.targetFps"
       :life="diag.life"
     />
+    <MusicControl @features="onMusic" />
     <DebugPanel v-if="debugMode" />
   </main>
 </template>

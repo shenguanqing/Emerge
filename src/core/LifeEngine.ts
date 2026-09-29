@@ -6,6 +6,7 @@ import { MemoryEngine } from './MemoryEngine';
 import { GrowthEngine } from './GrowthEngine';
 import { timeOfDay } from './TimeSystem';
 import { dayKey } from './MemoryEngine';
+import type { MusicFeatures } from '../input/AudioSystem';
 import { LifeClock } from './LifeClock';
 import type { LifeDNA } from './DNAEngine';
 
@@ -44,7 +45,11 @@ export class LifeEngine {
   private clickPulse = 0;
   private clickPos: [number, number, number] = [0, 0, 0];
   private pressing = false;
+  private music: MusicFeatures = {
+    active: false, bass: 0, mid: 0, treble: 0, energy: 0, beat: false,
+  };
   private sleepiness = 0;
+  private beatFlash = 0;
   private greetScatter = 0;
   private sleepyBoost = 0;
 
@@ -79,6 +84,11 @@ export class LifeEngine {
   /** 长按状态（吸引场随斜坡渐入渐出）。 */
   setPress(pressing: boolean): void {
     this.pressing = pressing;
+  }
+
+  /** 喂入音乐特征：生命体在"听音乐"（Bass 脉冲 / Beat 能量波 / 高能兴奋）。 */
+  setMusic(features: MusicFeatures): void {
+    this.music = features;
   }
 
   /** 点击事件：在指定世界坐标产生涟漪冲击。 */
@@ -239,6 +249,24 @@ export class LifeEngine {
         Math.cos(t2 * 0.9) * sep,
       ];
     }
+
+    // ---- 听音乐：Bass 身体脉冲 / Beat 核心能量波 / 高能兴奋、安静平静 ----
+    const m = this.music;
+    this.state.musicActive = m.active ? 1 : 0;
+    this.state.musicBass = m.bass;
+    this.state.musicTreble = m.treble;
+    this.state.musicEnergy = m.energy;
+    if (m.active) {
+      // Bass 直接叠加进呼吸缩放：身体随低音脉冲（原始需求：Bass → 身体脉冲）。
+      this.state.breathScale += m.bass * 0.16;
+      // Beat 触发核心能量波：独立衰减通道，避免被情绪基线覆盖。
+      if (m.beat) this.beatFlash = 1;
+      this.beatFlash *= Math.exp(-dt / 0.28);
+      // 高能音乐 → 兴奋；安静 → 偏 calm。
+      this.state.energy = Math.min(1, this.state.energy + m.energy * 0.25);
+    }
+    // 脉冲可视化取两者较大值：自发脉冲 / 节拍闪光。
+    this.state.pulseBoost = Math.max(this.emotion.pulseLevel, this.beatFlash);
 
     // 离线问候：回归时生命体从松散中重新凝聚、逐渐亮起。
     this.greetScatter *= Math.exp(-dt / 2.2);

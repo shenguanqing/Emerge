@@ -20,6 +20,7 @@
 | [reports/phase-8.md](reports/phase-8.md) | Phase 8 交付记录（桌面窗口与透明合成诊断） |
 | [reports/phase-9.md](reports/phase-9.md) | Phase 9 交付记录（自适应质量与低功耗） |
 | [reports/phase-10a.md](reports/phase-10a.md) | Phase 10a 交付记录（DNA/成长/记忆/时间/离线） |
+| [reports/phase-10b-music.md](reports/phase-10b-music.md) | Phase 10b-1 交付记录（音乐响应） |
 | [decisions/0001-technical-direction.md](decisions/0001-technical-direction.md) | 初始技术选择及待验证风险 |
 | [ORIGINAL_BRIEF.md](ORIGINAL_BRIEF.md) | 用户原始需求存档 |
 

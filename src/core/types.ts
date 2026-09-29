@@ -159,6 +159,14 @@ export interface LifeState {
   sleepiness: number;
   /** 环境亮度乘 0..1。 */
   brightness: number;
+  /** 音乐驱动：低频身体脉冲 0..1。 */
+  musicBass: number;
+  /** 音乐驱动：高频外围活跃 0..1。 */
+  musicTreble: number;
+  /** 音乐综合能量 0..1。 */
+  musicEnergy: number;
+  /** 音乐是否在播放。 */
+  musicActive: number;
   /** 形体对称度 0..1（DNA）。 */
   symmetry: number;
   /** Life ID（诊断显示）。 */
@@ -205,6 +213,10 @@ export function createLifeState(): LifeState {
     core2Offset: [0, 0, 0],
     sleepiness: 0,
     brightness: 1,
+    musicBass: 0,
+    musicTreble: 0,
+    musicEnergy: 0,
+    musicActive: 0,
     symmetry: 0.4,
     lifeId: '',
     ageDays: 0,
