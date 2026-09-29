@@ -5,6 +5,8 @@ import { BehaviorEngine } from './BehaviorEngine';
 import { MemoryEngine } from './MemoryEngine';
 import { GrowthEngine } from './GrowthEngine';
 import { timeOfDay } from './TimeSystem';
+import { dayKey } from './MemoryEngine';
+import { LifeClock } from './LifeClock';
 import type { LifeDNA } from './DNAEngine';
 
 /** 生命上下文：DNA + 记忆 + 成长（可选；缺省时为无记忆的裸引擎）。 */
@@ -12,6 +14,8 @@ export interface LifeContext {
   dna: LifeDNA;
   memory: MemoryEngine;
   growth: GrowthEngine;
+  /** 虚拟生命时钟（时间倍率/快进）；缺省为真实时间。 */
+  clock?: LifeClock;
 }
 
 /**
@@ -27,6 +31,7 @@ export class LifeEngine {
   private readonly memory: MemoryEngine | null = null;
   private readonly growth: GrowthEngine | null = null;
   private readonly dna: LifeDNA | null = null;
+  private readonly clock: LifeClock;
   private lastScatter = 0;
   private pointerReading: PointerReading = {
     active: false,
@@ -46,13 +51,14 @@ export class LifeEngine {
   constructor(private readonly params: LifeParams, life?: LifeContext) {
     this.state = createLifeState();
     this.emotion = new EmotionEngine(params.energyBase, params.curiosityBase, params.trustBase);
+    this.clock = life?.clock ?? new LifeClock(1);
     if (life) {
       this.memory = life.memory;
       this.growth = life.growth;
       this.dna = life.dna;
       this.state.symmetry = life.dna.symmetry;
       this.state.lifeId = life.dna.id;
-      this.memory.beginSession(new Date());
+      this.memory.beginSession(this.clock.date());
       this.state.growth = life.growth.state.growth;
       this.state.ring = life.growth.state.ring;
       this.state.dualCore = life.growth.state.dualCore ? 1 : 0;
@@ -178,8 +184,13 @@ export class LifeEngine {
       }
     }
 
-    // ---- 现实时间：昼夜影响睡眠倾向、亮度与活动量 ----
-    const tod = timeOfDay(new Date());
+    // ---- 现实时间：昼夜影响睡眠倾向、亮度与活动量（随生命时钟加速） ----
+    const vnow = this.clock.date();
+    // 虚拟日期跨天：登记新的陪伴日（timelapse 下一天只需真实几分钟）。
+    if (this.memory && dayKey(vnow) !== this.memory.state.lastVisitDay) {
+      this.memory.beginSession(vnow);
+    }
+    const tod = timeOfDay(vnow);
     this.sleepyBoost *= Math.exp(-dt / 60);
     const sleepTarget = Math.min(1, tod.sleepinessTarget * 0.6 + this.sleepyBoost);
     this.sleepiness += (sleepTarget - this.sleepiness) * (1 - Math.exp(-dt / 8));
@@ -198,8 +209,9 @@ export class LifeEngine {
 
     // ---- 记忆与成长：长期使用塑造性格与形态 ----
     if (this.memory) {
+      // dt 按生命时钟倍率换算成虚拟分钟（timelapse 加速成长与陪伴累计）。
       this.memory.tick({
-        dt,
+        dt: dt * this.clock.scale,
         active: this.state.pointerActive > 0.3,
         pointerSpeed: perceivedSpeed,
         shock,

@@ -14,6 +14,8 @@ import { applyDNA, generateDNA, type LifeDNA } from './core/DNAEngine';
 import { MemoryEngine, createMemoryState } from './core/MemoryEngine';
 import { GrowthEngine } from './core/GrowthEngine';
 import { defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
+import { LifeClock } from './core/LifeClock';
+import DebugPanel from './ui/DebugPanel.vue';
 import Diagnostics from './ui/Diagnostics.vue';
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -30,6 +32,7 @@ const diag = reactive({
 });
 
 const quality = new QualityManager();
+const debugMode = ref(false);
 
 type Backend = WebGL2Backend | WebGPUBackend;
 
@@ -79,6 +82,11 @@ onMounted(async () => {
   // ---- 生命存档：DNA 永久保存，记忆与年龄跨会话累积 ----
   const storage = defaultStorage();
   const nowDate = new Date();
+  // URL 参数：?timelapse=N 时间倍率、?debug=1 调试面板、?offline=N 模拟离开、?age=N 里程碑年龄
+  const urlParams = new URLSearchParams(window.location.search);
+  const timelapse = Math.max(Number(urlParams.get('timelapse') ?? '1') || 1, 1);
+  debugMode.value = urlParams.get('debug') === '1';
+  const clock = new LifeClock(timelapse);
   let dna: LifeDNA;
   let memory: MemoryEngine;
   let growth: GrowthEngine;
@@ -92,11 +100,25 @@ onMounted(async () => {
       interactionMinutes: memory.state.interactionMinutes,
       growthBias: dna.growthBias,
     });
-    offlineMinutes = Math.max(0, (Date.now() - loaded.snapshot.lastActiveTime) / 60000);
+    offlineMinutes = Math.max(0, (Date.now() - loaded.snapshot.lastActiveTime) / 60000) * timelapse;
   } else {
     dna = generateDNA(nowDate.getTime());
-    memory = new MemoryEngine(createMemoryState(nowDate));
-    growth = new GrowthEngine({ days: 1, interactionMinutes: 0, growthBias: dna.growthBias });
+    memory = new MemoryEngine(createMemoryState(clock.date()));
+    // ?age=N：直接把生命带到 N 天里程碑（测试成长形态用）。
+    const ageParam = Number(urlParams.get('age') ?? '0');
+    if (ageParam > 1) {
+      for (let i = ageParam; i >= 1; i -= 1) {
+        memory.state.daysSeen.push(
+          new Date(clock.now() - i * 86400000).toISOString().slice(0, 10),
+        );
+      }
+      memory.state.interactionMinutes = ageParam * 30;
+    }
+    growth = new GrowthEngine({
+      days: memory.growthInputs.days,
+      interactionMinutes: memory.state.interactionMinutes,
+      growthBias: dna.growthBias,
+    });
   }
   const params = { ...DEFAULT_LIFE_PARAMS };
   const simParams = { ...DEFAULT_SIMULATION_PARAMS };
@@ -149,8 +171,12 @@ onMounted(async () => {
     backendId = 'webgl2';
   }
 
-  engine = new LifeEngine(params, { dna, memory, growth });
-  if (offlineMinutes >= 10) engine.wakeFromOffline(offlineMinutes);
+  engine = new LifeEngine(params, { dna, memory, growth, clock });
+  const offlineParam = Number(urlParams.get('offline') ?? '0');
+  if (offlineParam > 0) engine.wakeFromOffline(offlineParam);
+  else if (offlineMinutes >= 10) engine.wakeFromOffline(offlineMinutes);
+  (window as typeof window & { __emergeClock?: LifeClock }).__emergeClock = clock;
+  (window as typeof window & { __emergeMemory?: MemoryEngine }).__emergeMemory = memory;
   pointer = new PointerSystem();
   pointer.attach(canvas);
 
@@ -284,6 +310,7 @@ onBeforeUnmount(() => {
       :target-fps="diag.targetFps"
       :life="diag.life"
     />
+    <DebugPanel v-if="debugMode" />
   </main>
 </template>
 
