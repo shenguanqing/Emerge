@@ -241,5 +241,14 @@ export class LifeEngine {
     this.greetScatter *= Math.exp(-dt / 2.2);
     if (this.greetScatter < 0.01) this.greetScatter = 0;
     this.state.scatter = Math.max(this.scatter, this.greetScatter);
+
+    // 年龄与阶段：随虚拟时钟实时更新（诊断/把玩反馈可见）。
+    if (this.dna) {
+      this.state.ageDays = Math.max(
+        0, Math.floor((this.clock.now() - this.dna.bornAt) / 86400000));
+      const g = this.state.growth;
+      this.state.stage =
+        g < 0.3 ? 'nascent' : g < 0.55 ? 'formed' : g < 0.85 ? 'ringed' : 'dual';
+    }
   }
 }

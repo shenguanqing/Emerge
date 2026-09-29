@@ -16,7 +16,15 @@ const w = window as typeof window & {
 };
 
 const vnow = ref('');
+const lastAction = ref('');
+let flashTimer = 0;
 let timer = 0;
+
+function flash(text: string): void {
+  lastAction.value = text;
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => (lastAction.value = ''), 1200);
+}
 onMounted(() => {
   const pad = (n: number) => String(n).padStart(2, '0');
   const tick = () => {
@@ -32,10 +40,14 @@ onBeforeUnmount(() => clearInterval(timer));
 
 function forwardDays(n: number): void {
   w.__emergeClock?.advance(n * 86400000);
+  flash(`+${n} 天 ✓`);
 }
 function addInteractionMinutes(n: number): void {
   const m = w.__emergeMemory;
-  if (m) m.state.interactionMinutes += n;
+  if (m) {
+    m.state.interactionMinutes += n;
+    flash(`+${n} 分钟互动 ✓`);
+  }
 }
 function simulateAbsence(days: number): void {
   w.__emergeClock?.advance(days * 86400000);
@@ -46,6 +58,9 @@ function simulateAbsence(days: number): void {
   window.location.href = url.toString();
 }
 function resetLife(): void {
+  // 守卫标志：旧页面的 beforeunload 自动存档会在离开前写回旧数据，
+  // 新页面加载时见到此标志会再次清档，以全新生命开始。
+  sessionStorage.setItem('emerge.reset', '1');
   localStorage.removeItem('emerge.life.v1');
   window.location.reload();
 }
@@ -55,6 +70,7 @@ function resetLife(): void {
   <div class="dbg">
     <div class="row title">时间加速调试</div>
     <div class="row">虚拟时间 {{ vnow }}（×{{ w.__emergeClock?.scale ?? 1 }}）</div>
+    <div class="row action">{{ lastAction }}</div>
     <div class="btns">
       <button @click="forwardDays(1)">+1 天</button>
       <button @click="addInteractionMinutes(60)">+60 分钟互动</button>
@@ -76,6 +92,10 @@ function resetLife(): void {
   font: 11px/1.7 ui-monospace, 'SF Mono', Menlo, monospace;
   color: rgba(210, 228, 255, 0.8);
   user-select: none;
+}
+.row.action {
+  min-height: 1.2em;
+  color: rgba(140, 255, 200, 0.9);
 }
 .row.title {
   font-weight: 600;

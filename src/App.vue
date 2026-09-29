@@ -13,7 +13,7 @@ import { QUALITY_TIERS, QualityManager, type QualityTier } from './core/QualityM
 import { applyDNA, generateDNA, type LifeDNA } from './core/DNAEngine';
 import { MemoryEngine, createMemoryState } from './core/MemoryEngine';
 import { GrowthEngine } from './core/GrowthEngine';
-import { defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
+import { clearLife, defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
 import { LifeClock } from './core/LifeClock';
 import DebugPanel from './ui/DebugPanel.vue';
 import Diagnostics from './ui/Diagnostics.vue';
@@ -91,7 +91,13 @@ onMounted(async () => {
   let memory: MemoryEngine;
   let growth: GrowthEngine;
   let offlineMinutes = 0;
-  const loaded = loadLife(storage);
+  // 重置守卫：清档后旧页面卸载时的自动存档可能写回旧数据，这里再次清除。
+  const resetting = sessionStorage.getItem('emerge.reset') === '1';
+  if (resetting) {
+    clearLife(storage);
+    sessionStorage.removeItem('emerge.reset');
+  }
+  const loaded = resetting ? ({ ok: false, reason: 'empty' } as const) : loadLife(storage);
   if (loaded.ok) {
     dna = loaded.snapshot.dna;
     memory = new MemoryEngine(loaded.snapshot.memory);
@@ -123,8 +129,7 @@ onMounted(async () => {
   const params = { ...DEFAULT_LIFE_PARAMS };
   const simParams = { ...DEFAULT_SIMULATION_PARAMS };
   applyDNA(dna, params, simParams);
-  const ageDays = Math.max(0, Math.floor((Date.now() - dna.bornAt) / 86400000));
-  diag.life = `${dna.id} · ${ageDays}天 · ${growth.state.stage}`;
+  diag.life = `${dna.id} · ${growth.state.stage}`;
   diag.particles = Math.round(params.particleCount * growth.state.particleMul);
   void storage;
 
@@ -247,6 +252,8 @@ onMounted(async () => {
       diag.particles = Math.round(
         QUALITY_TIERS[quality.tier].particles * (0.85 + 0.4 * st.growth),
       );
+      // 生命信息实时更新：年龄随虚拟时钟、成长百分比随时可见。
+      diag.life = `${st.lifeId} · ${st.ageDays}天 · ${st.stage} · 成长${Math.round(st.growth * 100)}%`;
     }
 
     // 低功耗帧限制：闲置时 60→30→15，模拟步长按真实间隔保持速度一致。

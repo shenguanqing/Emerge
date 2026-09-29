@@ -161,6 +161,10 @@ export interface LifeState {
   symmetry: number;
   /** Life ID（诊断显示）。 */
   lifeId: string;
+  /** 年龄（虚拟天）。 */
+  ageDays: number;
+  /** 成长阶段标签。 */
+  stage: string;
   /** 感知到的指针位置（世界坐标，含反应延迟）。 */
   pointerPos: [number, number, number];
   /** 感知到的指针速度（世界单位/秒）。 */
@@ -200,6 +204,8 @@ export function createLifeState(): LifeState {
     brightness: 1,
     symmetry: 0.4,
     lifeId: '',
+    ageDays: 0,
+    stage: 'nascent',
     pointerPos: [0, 0, 99],
     pointerVel: [0, 0, 0],
     pointerActive: 0,
