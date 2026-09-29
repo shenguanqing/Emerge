@@ -8,7 +8,9 @@
 
 ## 当前状态
 
-**MVP（Phase 1–9）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度。分阶段验证记录见 [docs/reports/](docs/reports/)。
+**MVP（Phase 1–9）与生命闭环（Phase 10a）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度；**永久 DNA（Life ID）、成长（行星环/双核）、记忆性格、现实昼夜、离线回归问候与持久化存档**。分阶段验证记录见 [docs/reports/](docs/reports/)。
+
+你的生命体首次运行时诞生（Life ID 永久保存），陪伴与互动让它成长——多互动会解锁行星环与第二核心；凌晨它会困、变暗；几天不开、回来时它会从松散中重新凝聚向你打招呼。存档在浏览器 localStorage（30 秒自动保存）。
 
 ```bash
 npm install
