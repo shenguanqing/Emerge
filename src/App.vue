@@ -190,6 +190,9 @@ onMounted(async () => {
 
     inputPointer.tick(simDt);
     lifeEngine.setPointer(inputPointer.getReading());
+    lifeEngine.setPress(inputPointer.isPressing());
+    const click = inputPointer.consumeClick();
+    if (click) lifeEngine.click(click.x, click.y, click.z);
     lifeEngine.update(simDt);
     activeBackend.frame(lifeEngine.getState(), simDt);
   };

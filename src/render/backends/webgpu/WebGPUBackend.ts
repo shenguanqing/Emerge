@@ -19,7 +19,9 @@ struct Sim {
   pointerVel_pad: vec4f, // pointerVel.xyz, pad
   data6: vec4f,          // pointerRadius, pointerPush, impactSpeed, impactPush
   data7: vec4f,          // scatter, wary, contract, energy
-  data8: vec4f,          // pointerPushMul, pad, pad, pad
+  data8: vec4f,          // pointerPushMul, pulseBoost, press, pad
+  data9: vec4f,          // pressStrength, pad, pad, pad
+  clickPos_pulse: vec4f, // click.xyz, clickPulse
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -181,11 +183,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   force = force + tangent * swirl * smoothstep(5.0, 0.5, dist);
 
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
-  let flowPos = p * curlFreq + vec3f(0.0, 0.0, time * curlSpeed);
+  let flowPos = p * curlFreq + vec3f(0.0, 0.0, time * curlSpeed * (1.0 + 1.2 * sim.data8.y));
   var curlMul = 1.5;
   if (layer < 0.5) { curlMul = 0.3; }
   if (layer > 0.5 && layer < 1.5) { curlMul = 1.0; }
-  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * curlMul);
+  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * (1.0 + 0.7 * sim.data8.y) * curlMul);
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   if (sim.pointerPos_act.w > 0.01) {
@@ -196,9 +198,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     let speed = length(sim.pointerVel_pad.xyz);
     let impact = smoothstep(sim.data6.z, sim.data6.z * 2.5, speed) * influence;
     let waryMul = 1.0 + sim.data7.y * 0.6;
-    force = force + away * (influence * sim.data6.y * sim.data8.x * waryMul + impact * sim.data6.w * 3.0);
+    let pushMul = influence * sim.data6.y * sim.data8.x * waryMul * (1.0 - sim.data8.z);
+    force = force + away * (pushMul + impact * sim.data6.w * 3.0);
     force = force + sim.pointerVel_pad.xyz * impact * 0.9;
   }
+
+  // 长按吸引场：粒子围向按压点（交互把玩）。
+  if (sim.data8.z > 0.01) {
+    let toPress = sim.pointerPos_act.xyz - p;
+    let dPress = length(toPress) + 1e-4;
+    let pin = smoothstep(sim.data6.x + 0.6, 0.0, dPress);
+    force = force + (toPress / dPress) * (sim.data8.z * sim.data9.x * pin);
+  }
+
+  // 点击涟漪：从点击点向外的单次冲击波。
+  let dcl = length(p - sim.clickPos_pulse.xyz) + 1e-4;
+  force = force + ((p - sim.clickPos_pulse.xyz) / dcl) * (smoothstep(2.4, 0.0, dcl) * sim.clickPos_pulse.w * 26.0);
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   v = (v + force * dt) * exp(-damping * dt);
@@ -214,7 +229,7 @@ struct R {
   vp: mat4x4f,
   data: vec4f,           // pointSizePx, viewportW, viewportH, unused
   data2: vec4f,          // formMix, breathWave, revealT, revealSeconds
-  data3: vec4f,          // moodShift, pad, pad, pad
+  data3: vec4f,          // moodShift, pulseBoost, energy, time
 };
 
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
@@ -246,6 +261,9 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   if (layer < 0.5) { sizeMul = 1.5; }
   if (layer > 0.5 && layer < 1.5) { sizeMul = 1.0; }
   sizeMul = sizeMul * mix(1.35, 1.0, r.data2.x);
+  // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同）。
+  let tw = sin(r.data3.w * (2.5 + p4.w * 3.5) + p4.w * 40.0);
+  sizeMul = sizeMul * (1.0 + r.data3.y * 0.15 + r.data3.z * 0.12 * tw);
   let pointPx = r.data.x * depthFade * sizeMul;
   let halfNdc = corner * (pointPx / vec2f(r.data.y, r.data.z));
 
@@ -253,7 +271,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   result.position = vec4f(clip.xy + halfNdc * clip.w, clip.z, clip.w);
   result.uv = corner;
   result.layer = layer;
-  result.alpha = reveal * mix(0.7, 1.0, r.data2.x);
+  result.alpha = reveal * mix(0.7, 1.0, r.data2.x) * (1.0 + r.data3.z * 0.2 * tw);
   return result;
 }
 
@@ -267,7 +285,7 @@ fn fs(vin: VOut) -> @location(0) vec4f {
   let breathWave = r.data2.y;
   let coreCol = mix(vec3f(0.90, 0.95, 1.0), vec3f(1.0, 0.96, 0.9), r.data3.x * 0.35)
               * (1.6 + 1.0 * breathWave);
-  let bodyCol = vec3f(0.42, 0.62, 0.95) * 1.35;
+  let bodyCol = mix(vec3f(0.42, 0.62, 0.95), vec3f(0.50, 0.78, 1.0), r.data3.x * 0.6) * 1.35;
   let auraCol = vec3f(0.24, 0.40, 0.75) * 0.8;
   var col = auraCol;
   var layerAlpha = 0.55;
@@ -323,9 +341,9 @@ export class WebGPUBackend {
   private readonly renderPipeline: GPURenderPipeline;
   private readonly computeBinds: [GPUBindGroup, GPUBindGroup];
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
-  /** [0..15] VP；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds；[24] moodShift。 */
+  /** [0..15] VP；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds；[24..27] moodShift, pulseBoost, energy, time。 */
   private readonly renderData = new Float32Array(28);
-  private readonly simData = new Float32Array(56);
+  private readonly simData = new Float32Array(52);
   private pointSize: number;
   private dpr = 1;
   private clearAlpha = 1;
@@ -360,7 +378,7 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 224,
+      size: 208,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
@@ -498,11 +516,18 @@ export class WebGPUBackend {
     this.simData[33] = this.sim.pointerPush;
     this.simData[34] = this.sim.impactSpeed;
     this.simData[35] = this.sim.impactPush;
-    this.simData[40] = state.scatter;
-    this.simData[41] = state.wary;
-    this.simData[42] = state.contract;
-    this.simData[43] = state.energy;
-    this.simData[48] = state.pointerPushMul;
+    this.simData[36] = state.scatter;
+    this.simData[37] = state.wary;
+    this.simData[38] = state.contract;
+    this.simData[39] = state.energy;
+    this.simData[40] = state.pointerPushMul;
+    this.simData[41] = state.pulseBoost;
+    this.simData[42] = state.pressRamp;
+    this.simData[44] = this.sim.pressStrength;
+    this.simData[48] = state.clickPos[0];
+    this.simData[49] = state.clickPos[1];
+    this.simData[50] = state.clickPos[2];
+    this.simData[51] = state.clickPulse;
     d.queue.writeBuffer(this.simUniform, 0, this.simData);
 
     this.renderData[20] = state.formMix;
@@ -510,6 +535,9 @@ export class WebGPUBackend {
     this.renderData[22] = state.revealT;
     this.renderData[23] = this.params.revealSeconds;
     this.renderData[24] = state.moodShift;
+    this.renderData[25] = state.pulseBoost;
+    this.renderData[26] = state.energy;
+    this.renderData[27] = state.time;
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 
     const read = this.readIdx;

@@ -21,6 +21,10 @@ export class LifeEngine {
   };
   private scatter = 0;
   private wary = 0;
+  private pressRamp = 0;
+  private clickPulse = 0;
+  private clickPos: [number, number, number] = [0, 0, 0];
+  private pressing = false;
 
   constructor(private readonly params: LifeParams) {
     this.state = createLifeState();
@@ -30,6 +34,17 @@ export class LifeEngine {
   /** 提供最新原始指针读数；感知延迟在 update 内平滑。 */
   setPointer(reading: PointerReading): void {
     this.pointerReading = reading;
+  }
+
+  /** 长按状态（吸引场随斜坡渐入渐出）。 */
+  setPress(pressing: boolean): void {
+    this.pressing = pressing;
+  }
+
+  /** 点击事件：在指定世界坐标产生涟漪冲击。 */
+  click(x: number, y: number, z: number): void {
+    this.clickPos = [x, y, z];
+    this.clickPulse = 1;
   }
 
   /** 只读状态快照，供渲染层消费。 */
@@ -114,5 +129,25 @@ export class LifeEngine {
     this.state.contract = behavior.contract;
     this.state.moodShift = em.mood;
     this.state.pointerPushMul = behavior.pointerPushMul;
+
+    // ---- 长按吸引与点击涟漪 ----
+    const pressTarget = this.pressing && this.state.pointerActive > 0.3 ? 1 : 0;
+    const pressTau = pressTarget > this.pressRamp ? 0.12 : 0.4;
+    this.pressRamp += (pressTarget - this.pressRamp) * (1 - Math.exp(-dt / pressTau));
+    this.clickPulse *= Math.exp(-dt / 0.45);
+    if (this.clickPulse < 0.01) this.clickPulse = 0;
+    this.state.pressRamp = this.pressRamp;
+    this.state.clickPulse = this.clickPulse;
+    this.state.clickPos = this.clickPos;
+    this.state.pulseBoost = this.emotion.pulseLevel;
+
+    // 长按把玩：核心被手指牵引（渐进倾斜，非瞬移）。
+    if (this.pressRamp > 0.01 && this.state.pointerActive > 0.3) {
+      const pull = (1 - Math.exp(-dt / 0.6)) * 0.5 * this.pressRamp;
+      for (let i = 0; i < 3; i += 1) {
+        this.state.corePosition[i] +=
+          (perceived.world[i] - this.state.corePosition[i]) * pull;
+      }
+    }
   }
 }

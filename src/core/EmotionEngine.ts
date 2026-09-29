@@ -63,6 +63,11 @@ export class EmotionEngine {
     this.energyBaseValue = energyBase;
   }
 
+  /** 当前自发脉冲强度 0..1（供渲染可视化为突发活跃）。 */
+  get pulseLevel(): number {
+    return this.pulse;
+  }
+
   update(inp: EmotionInputs): void {
     const dt = inp.dt;
     const s = this.state;

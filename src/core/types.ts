@@ -85,6 +85,8 @@ export interface SimulationParams {
   impactSpeed: number;
   /** 冲击波强度。 */
   impactPush: number;
+  /** 长按吸引场强度。 */
+  pressStrength: number;
 }
 
 export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
@@ -100,6 +102,7 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
   pointerPush: 1.8,
   impactSpeed: 2.0,
   impactPush: 9.0,
+  pressStrength: 2.6,
 };
 
 /** 生命引擎每帧输出的只读快照；渲染层只消费，不回写。 */
@@ -134,6 +137,14 @@ export interface LifeState {
   moodShift: number;
   /** 指针排斥乘数（信任/好奇时温和靠近，受惊时加强）。 */
   pointerPushMul: number;
+  /** 长按吸引斜坡 0..1。 */
+  pressRamp: number;
+  /** 点击涟漪强度 0..1（衰减中）。 */
+  clickPulse: number;
+  /** 最近一次点击的世界坐标。 */
+  clickPos: [number, number, number];
+  /** 自发能量脉冲 0..1（可视化突发活跃）。 */
+  pulseBoost: number;
   /** 感知到的指针位置（世界坐标，含反应延迟）。 */
   pointerPos: [number, number, number];
   /** 感知到的指针速度（世界单位/秒）。 */
@@ -161,6 +172,10 @@ export function createLifeState(): LifeState {
     contract: 0,
     moodShift: 0.5,
     pointerPushMul: 1,
+    pressRamp: 0,
+    clickPulse: 0,
+    clickPos: [0, 0, 0],
+    pulseBoost: 0,
     pointerPos: [0, 0, 99],
     pointerVel: [0, 0, 0],
     pointerActive: 0,

@@ -54,6 +54,17 @@
 
 **Windows（WebView2）验证——保留待办**：本会话环境无 Windows 机器，该验证无法执行。待办步骤：Windows 上 `npm install && npm run app:build`，运行 `src-tauri/target/debug/emerge.exe`，确认 ① 窗口背景透明（无黑底）② 交互正常 ③ 记录后端（WebView2 的 WebGPU/WebGL2）与 FPS——结果更新至本文件并删除本条。WebView2 不受 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)（WKWebView 基底缺陷）影响，预期透明可用。
 
+## 真人体验反馈（2026-09-29，用户实际运行）
+
+- 反馈原文：「玩了一下有点 boring，鼠标划过能发现我」。
+- 判定：**「愿意继续玩」未成立** → 按原始需求进入打磨循环（暂停功能扩张，优先生命感与交互反馈）。
+- 已执行的打磨迭代 1（同日）：
+  - **修复 WebGPU 后端 uniform 错位**：data7（scatter/wary/contract/energy）与 data8（pointerPushMul）写入偏移与 WGSL 声明不一致，导致默认后端上情绪视觉反馈静默失效——这正是「boring」的技术成因之一。
+  - 新增交互：**点击涟漪**（点击处向外冲击波，力度 26、衰减 tau 0.45）、**长按吸引场**（按住时排斥淡出、粒子围向指尖、核心渐进跟随）。
+  - 情绪可视化：能量闪烁（粒子明暗随 energy 抖动）、自发脉冲突发活跃、身体体色随 mood 偏移。
+  - 修复 pointerdown 不更新指针位置的缺陷（首次点击/落点跳变场景）。
+- 验证：点击涟漪坐标与衰减实测正确（clickPos (1.09,0.27)、pulse 0.9→0.42）；长按 pressRamp=1、粒子群可见聚集、无误惊吓。待用户复验。
+
 ## 结论
 
-MVP（Phase 1–9）功能与稳定性验收通过；「生命感」主观验收待真人体验。按原始需求，Phase 10（DNA / 成长 / 记忆 / 音乐 / 跨设备）在 MVP 验收成立后启动。
+MVP（Phase 1–9）功能与稳定性验收通过；「生命感」主观验收第一轮真人反馈为「boring」，已进入打磨循环（迭代 1 完成，待复验）。按原始需求，Phase 10（DNA / 成长 / 记忆 / 音乐 / 跨设备）在体验验收成立后启动。

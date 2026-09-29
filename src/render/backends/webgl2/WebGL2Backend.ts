@@ -41,7 +41,16 @@ uniform float uScatter;
 uniform float uWary;
 uniform float uContract;
 uniform float uEnergy;
+uniform float uPulseBoost;
+uniform float uPress;
+uniform float uPressStrength;
+uniform vec3 uClickPos;
+uniform float uClickPulse;
 uniform float uPointerPushMul;
+uniform float uEnergy;
+uniform float uPulseBoost;
+uniform float uPress;
+uniform float uPressStrength;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -185,11 +194,25 @@ void main() {
     vec3 away = -toP / dP;
     float speed = length(uPointerVel);
     float impact = smoothstep(uImpactSpeed, uImpactSpeed * 2.5, speed) * influence;
-    // 警觉期：影响半径与排斥略增，保持更远距离（缓慢消退）。
+    // 警觉期：影响半径与排斥略增；长按时排斥淡出（把玩优先）。
     float waryMul = 1.0 + uWary * 0.6;
-    force += away * (influence * uPointerPush * uPointerPushMul * waryMul + impact * uImpactPush * 3.0);
+    float pushMul = influence * uPointerPush * uPointerPushMul * waryMul * (1.0 - uPress);
+    force += away * (pushMul + impact * uImpactPush * 3.0);
     force += uPointerVel * impact * 0.9;
   }
+
+  // 长按吸引场：粒子围向按压点（交互把玩）。
+  if (uPress > 0.01) {
+    vec3 toPress = uPointerPos - p;
+    float dPress = length(toPress) + 1e-4;
+    float pin = smoothstep(uPointerRadius + 0.6, 0.0, dPress);
+    force += (toPress / dPress) * (uPress * uPressStrength * pin);
+  }
+
+  // 点击涟漪：从点击点向外的单次冲击波。
+  vec3 dc = p - uClickPos;
+  float dcl = length(dc) + 1e-4;
+  force += (dc / dcl) * (smoothstep(2.4, 0.0, dcl) * uClickPulse * 26.0);
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   vec3 nv = (v + force * uDt) * exp(-uDamping * uDt);
@@ -218,6 +241,9 @@ uniform float uPixelRatio;
 uniform float uRevealT;
 uniform float uRevealSeconds;
 uniform float uFormMix;
+uniform float uTime;
+uniform float uEnergy;
+uniform float uPulseBoost;
 attribute float aRef;
 varying float vGlow;
 varying float vAlpha;
@@ -265,7 +291,7 @@ void main() {
   // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
   vec3 coreCol = mix(vec3(0.90, 0.95, 1.0), vec3(1.0, 0.96, 0.9), uMoodShift * 0.35)
                * (1.6 + 1.0 * uBreathWave);
-  vec3 bodyCol = vec3(0.42, 0.62, 0.95) * 1.35;
+  vec3 bodyCol = mix(vec3(0.42, 0.62, 0.95), vec3(0.50, 0.78, 1.0), uMoodShift * 0.6) * 1.35;
   vec3 auraCol = vec3(0.24, 0.40, 0.75) * 0.8;
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
   float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55);
@@ -372,6 +398,11 @@ export class WebGL2Backend {
       uWary: { value: 0 },
       uContract: { value: 0 },
       uEnergy: { value: this.params.energyBase },
+      uPulseBoost: { value: 0 },
+      uPress: { value: 0 },
+      uPressStrength: { value: this.sim.pressStrength },
+      uClickPos: { value: new THREE.Vector3() },
+      uClickPulse: { value: 0 },
       uPointerPushMul: { value: 1 },
     };
     Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
@@ -405,6 +436,9 @@ export class WebGL2Backend {
         uFormMix: { value: 0 },
         uBreathWave: { value: 0 },
         uMoodShift: { value: 0.5 },
+        uTime: { value: 0 },
+        uEnergy: { value: params.energyBase },
+        uPulseBoost: { value: 0 },
       },
       vertexShader: POINTS_VERT,
       fragmentShader: POINTS_FRAG,
@@ -460,13 +494,21 @@ export class WebGL2Backend {
     u.uWary.value = state.wary;
     u.uContract.value = state.contract;
     u.uEnergy.value = state.energy;
+    u.uPulseBoost.value = state.pulseBoost;
+    u.uPress.value = state.pressRamp;
     u.uPointerPushMul.value = state.pointerPushMul;
+    (u.uClickPos.value as THREE.Vector3).set(
+      state.clickPos[0], state.clickPos[1], state.clickPos[2]);
+    u.uClickPulse.value = state.clickPulse;
     this.posVar.material.uniforms.uDt.value = dt;
 
     const m = this.material.uniforms;
     m.uRevealT.value = state.revealT;
     m.uFormMix.value = state.formMix;
     m.uBreathWave.value = state.breathWave;
+    m.uTime.value = state.time;
+    m.uEnergy.value = state.energy;
+    m.uPulseBoost.value = state.pulseBoost;
     m.uMoodShift.value = state.moodShift;
 
     this.gpu.compute();

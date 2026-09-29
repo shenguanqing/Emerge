@@ -13,6 +13,8 @@ export class PointerSystem {
 
   /** 最近一次指针活动的时间戳（performance.now）。 */
   lastActivity = 0;
+  private pressing = false;
+  private pendingClick: { x: number; y: number } | null = null;
 
   private target: HTMLElement | null = null;
   private lastX = 0;
@@ -30,18 +32,24 @@ export class PointerSystem {
     this.viewportH = Math.max(h, 1);
   }
 
+  /** CSS 像素 → 生命体世界坐标（z=0 平面）。 */
+  private cssToWorld(x: number, y: number): [number, number, number] {
+    const aspect = this.viewportW / this.viewportH;
+    const halfH = Math.tan(PointerSystem.FOV_Y / 2) * PointerSystem.CAM_DIST;
+    const halfW = halfH * aspect;
+    const ndcX = (x / this.viewportW) * 2 - 1;
+    const ndcY = -((y / this.viewportH) * 2 - 1);
+    return [ndcX * halfW, ndcY * halfH, 0];
+  }
+
   /** 换算到世界坐标的当前读数。 */
   getReading(): PointerReading {
     const worldPerPx =
       (2 * Math.tan(PointerSystem.FOV_Y / 2) * PointerSystem.CAM_DIST) / this.viewportH;
-    const aspect = this.viewportW / this.viewportH;
-    const ndcX = (this.position.x / this.viewportW) * 2 - 1;
-    const ndcY = -((this.position.y / this.viewportH) * 2 - 1);
-    const halfW = Math.tan(PointerSystem.FOV_Y / 2) * PointerSystem.CAM_DIST * aspect;
-    const halfH = Math.tan(PointerSystem.FOV_Y / 2) * PointerSystem.CAM_DIST;
+    const world = this.cssToWorld(this.position.x, this.position.y);
     return {
       active: this.inCanvas,
-      world: [ndcX * halfW, ndcY * halfH, 0],
+      world,
       worldVel: [this.velocity.x * worldPerPx, -this.velocity.y * worldPerPx, 0],
     };
   }
@@ -86,6 +94,38 @@ export class PointerSystem {
     this.lastActivity = performance.now();
   };
 
+  private readonly onDown = (event: PointerEvent) => {
+    // 按下即同步位置（首次点击/落点跳变时不携带历史速度）。
+    this.inCanvas = true;
+    this.position.x = event.clientX;
+    this.position.y = event.clientY;
+    this.lastX = event.clientX;
+    this.lastY = event.clientY;
+    this.velocity.x = 0;
+    this.velocity.y = 0;
+    this.pressing = true;
+    this.lastActivity = performance.now();
+    this.pendingClick = { x: event.clientX, y: event.clientY };
+  };
+
+  private readonly onUp = () => {
+    this.pressing = false;
+  };
+
+  /** 是否正在按住（长按吸引场）。 */
+  isPressing(): boolean {
+    return this.pressing;
+  }
+
+  /** 取出一次待处理的点击（世界坐标，按下瞬间的位置）；无则返回 null。 */
+  consumeClick(): { x: number; y: number; z: number } | null {
+    if (!this.pendingClick) return null;
+    const css = this.pendingClick;
+    this.pendingClick = null;
+    const world = this.cssToWorld(css.x, css.y);
+    return { x: world[0], y: world[1], z: 0 };
+  }
+
   private readonly onLeave = () => {
     this.velocity.x = 0;
     this.velocity.y = 0;
@@ -98,6 +138,9 @@ export class PointerSystem {
     target.addEventListener('pointermove', this.onMove);
     target.addEventListener('pointerenter', this.onEnter);
     target.addEventListener('pointerleave', this.onLeave);
+    target.addEventListener('pointerdown', this.onDown);
+    target.addEventListener('pointerup', this.onUp);
+    target.addEventListener('pointercancel', this.onUp);
     this.inCanvas = true;
   }
 
@@ -106,7 +149,11 @@ export class PointerSystem {
     this.target.removeEventListener('pointermove', this.onMove);
     this.target.removeEventListener('pointerenter', this.onEnter);
     this.target.removeEventListener('pointerleave', this.onLeave);
+    this.target.removeEventListener('pointerdown', this.onDown);
+    this.target.removeEventListener('pointerup', this.onUp);
+    this.target.removeEventListener('pointercancel', this.onUp);
     this.target = null;
+    this.pressing = false;
   }
 
   dispose(): void {
