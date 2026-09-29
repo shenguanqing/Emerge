@@ -223,17 +223,20 @@ export class LifeEngine {
         days: this.memory.growthInputs.days,
         interactionMinutes: this.memory.state.interactionMinutes,
         growthBias: this.dna ? this.dna.growthBias : 0.5,
+        tailProbability: this.dna ? this.dna.tailProbability : 0.5,
       });
       const g = this.growth.state;
       this.state.growth = g.growth;
       this.state.ring = g.ring;
       this.state.dualCore = g.dualCore ? 1 : 0;
-      // 第二核心绕主核心缓慢环绕。
+      this.state.arms = g.arms;
+      // 双星：第二核心绕主核心环绕，间距随成长拉开（身体被拉成双星结构）。
       const t2 = this.state.time * 0.13;
+      const sep = 0.9 + g.growth * 1.5;
       this.state.core2Offset = [
-        Math.sin(t2) * 1.15,
-        0.18 * Math.sin(t2 * 1.7),
-        Math.cos(t2 * 0.9) * 1.15,
+        Math.sin(t2) * sep,
+        0.18 * Math.sin(t2 * 1.7) * sep,
+        Math.cos(t2 * 0.9) * sep,
       ];
     }
 

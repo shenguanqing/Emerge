@@ -94,10 +94,10 @@ test('记忆：温和互动累计信任输入，受惊累计计数', () => {
 });
 
 test('成长：互动与天数单调推进且封顶', () => {
-  const g = new GrowthEngine({ days: 1, interactionMinutes: 0, growthBias: 0.5 });
+  const g = new GrowthEngine({ days: 1, interactionMinutes: 0, growthBias: 0.5, tailProbability: 0.5 });
   let prev = g.state.growth;
   for (let m = 30; m <= 600; m += 30) {
-    g.update({ days: 1 + m / 120, interactionMinutes: m, growthBias: 0.5 });
+    g.update({ days: 1 + m / 120, interactionMinutes: m, growthBias: 0.5, tailProbability: 0.5 });
     assert.ok(g.state.growth >= prev);
     prev = g.state.growth;
   }

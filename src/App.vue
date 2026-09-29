@@ -105,6 +105,7 @@ onMounted(async () => {
       days: memory.growthInputs.days,
       interactionMinutes: memory.state.interactionMinutes,
       growthBias: dna.growthBias,
+      tailProbability: dna.tailProbability,
     });
     offlineMinutes = Math.max(0, (Date.now() - loaded.snapshot.lastActiveTime) / 60000) * timelapse;
   } else {
@@ -124,6 +125,7 @@ onMounted(async () => {
       days: memory.growthInputs.days,
       interactionMinutes: memory.state.interactionMinutes,
       growthBias: dna.growthBias,
+      tailProbability: dna.tailProbability,
     });
   }
   const params = { ...DEFAULT_LIFE_PARAMS };
@@ -249,8 +251,9 @@ onMounted(async () => {
       const st = lifeEngine.getState();
       diag.mood =
         st.scared > 0.45 ? '受惊' : st.curious > 0.45 ? '好奇' : st.contract > 0.2 ? '警觉' : '平静';
-      diag.particles = Math.round(
-        QUALITY_TIERS[quality.tier].particles * (0.85 + 0.4 * st.growth),
+      diag.particles = Math.min(
+        Math.round(QUALITY_TIERS[quality.tier].particles * (0.85 + 0.4 * st.growth)),
+        100_000,
       );
       // 生命信息实时更新：年龄随虚拟时钟、成长百分比随时可见。
       diag.life = `${st.lifeId} · ${st.ageDays}天 · ${st.stage} · 成长${Math.round(st.growth * 100)}%`;

@@ -151,6 +151,8 @@ export interface LifeState {
   ring: number;
   /** 双核心 0/1。 */
   dualCore: number;
+  /** 旋臂数量 1..5（成长×DNA 尾迹倾向）。 */
+  arms: number;
   /** 第二核心偏移（世界坐标）。 */
   core2Offset: [number, number, number];
   /** 睡眠倾向 0..1（现实时间驱动）。 */
@@ -199,6 +201,7 @@ export function createLifeState(): LifeState {
     growth: 0,
     ring: 0,
     dualCore: 0,
+    arms: 1,
     core2Offset: [0, 0, 0],
     sleepiness: 0,
     brightness: 1,

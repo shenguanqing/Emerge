@@ -11,6 +11,8 @@ export interface GrowthInputs {
   interactionMinutes: number;
   /** DNA 成长倾向 0..1。 */
   growthBias: number;
+  /** DNA 尾迹倾向 0..1（决定旋臂数量上限）。 */
+  tailProbability: number;
 }
 
 export interface GrowthState {
@@ -20,6 +22,8 @@ export interface GrowthState {
   ring: number;
   /** 双核心是否解锁。 */
   dualCore: boolean;
+  /** 旋臂数量 1..5（随成长与 DNA 尾迹倾向增多）。 */
+  arms: number;
   /** 阶段标签（可视化参考）：初生 / 成形 / 环生 / 双核。 */
   stage: 'nascent' | 'formed' | 'ringed' | 'dual';
   /** 活跃粒子乘数 0.85..1.25（随成长增多）。 */
@@ -52,6 +56,8 @@ export class GrowthEngine {
 
     const ring = clamp01((growth - 0.55) / 0.35);
     const dualCore = growth >= 0.85;
+    // 旋臂：成长过半后逐渐长出，数量受 DNA 尾迹倾向影响（1..5）。
+    const arms = Math.round(clamp01((growth - 0.4) / 0.45) * (1 + inputs.tailProbability * 4)) + 1;
     const stage =
       growth < 0.3 ? 'nascent' : growth < 0.55 ? 'formed' : growth < 0.85 ? 'ringed' : 'dual';
 
@@ -59,6 +65,7 @@ export class GrowthEngine {
       growth,
       ring,
       dualCore,
+      arms,
       stage,
       particleMul: 0.85 + 0.4 * growth,
     };

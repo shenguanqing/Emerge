@@ -22,7 +22,8 @@ struct Sim {
   data8: vec4f,          // pointerPushMul, pulseBoost, press, pad
   data9: vec4f,          // pressStrength, pad, pad, pad
   clickPos_pulse: vec4f, // click.xyz, clickPulse
-  data10: vec4f,         // symmetry, ring, dual, pad
+  data10: vec4f,         // symmetry, ring, dual, arms
+  data11: vec4f,         // growth, pad, pad, pad
   core2Offset: vec4f,    // 第二核心偏移
 };
 
@@ -242,7 +243,7 @@ struct R {
   data: vec4f,           // pointSizePx, viewportW, viewportH, unused
   data2: vec4f,          // formMix, breathWave, revealT, revealSeconds
   data3: vec4f,          // moodShift, pulseBoost, energy, time
-  data4: vec4f,          // brightness, pad, pad, pad
+  data4: vec4f,          // brightness, growth, pad, pad
 };
 
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
@@ -253,6 +254,8 @@ struct VOut {
   @location(0) uv: vec2f,
   @location(1) @interpolate(flat) layer: f32,
   @location(2) alpha: f32,
+  @location(3) @interpolate(flat) sat: f32,
+  @location(4) glowBoost: f32,
 };
 
 @vertex
@@ -305,7 +308,8 @@ fn fs(vin: VOut) -> @location(0) vec4f {
   if (vin.layer < 0.5) { col = coreCol; layerAlpha = 1.0; }
   if (vin.layer > 0.5 && vin.layer < 1.5) { col = bodyCol; layerAlpha = 0.85; }
   let depthFade = clamp(2.5 / max(vin.position.w, 0.001), 0.2, 2.0);
-  let glow = col * (0.85 + 0.15 * depthFade) * r.data4.x;
+  var glow = col * (0.85 + 0.15 * depthFade) * r.data4.x;
+  glow = mix(glow, vec3f(1.0), vin.sat * 0.6); // 卫星粒子亮白
   return vec4f(glow * a, a * vin.alpha * layerAlpha);
 }
 `;
@@ -540,7 +544,9 @@ export class WebGPUBackend {
     this.simData[52] = state.symmetry;
     this.simData[53] = state.ring;
     this.simData[54] = state.dualCore;
-    this.simData[56] = state.core2Offset[0];
+    this.simData[55] = state.arms;
+    this.simData[56] = state.growth;
+    this.simData[60] = state.core2Offset[0];
     this.simData[57] = state.core2Offset[1];
     this.simData[58] = state.core2Offset[2];
     this.simData[48] = state.clickPos[0];
@@ -558,6 +564,7 @@ export class WebGPUBackend {
     this.renderData[26] = state.energy;
     this.renderData[27] = state.time;
     this.renderData[28] = state.brightness;
+    this.renderData[29] = state.growth;
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 
     const read = this.readIdx;

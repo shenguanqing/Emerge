@@ -45,6 +45,8 @@ uniform float uPulseBoost;
 uniform float uSymmetry;
 uniform float uRing;
 uniform float uDual;
+uniform float uArms;
+uniform float uGrowth;
 uniform vec3 uCore2Offset;
 uniform float uPress;
 uniform float uPressStrength;
@@ -56,6 +58,8 @@ uniform float uPulseBoost;
 uniform float uSymmetry;
 uniform float uRing;
 uniform float uDual;
+uniform float uArms;
+uniform float uGrowth;
 uniform vec3 uCore2Offset;
 uniform float uPress;
 uniform float uPressStrength;
@@ -173,14 +177,38 @@ void main() {
                : mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - uBreathWave));
   vec3 anchor = dir * bodyR * radMul;
 
-  // 成长：行星环（身体层粒子按 h 窗口展平为环面）。
-  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + uRing * 0.3) {
+  // 成长：行星环（更锐利的环面）。
+  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + uRing * 0.13) {
     anchor = dir * uBodyBase * 1.55 * uBreath;
-    anchor.y *= 0.14;
+    anchor.y *= 0.12;
   }
-  // 成长：双核心（第二核心粒子群绕副核运动）。
-  if (uDual > 0.5 && seed >= 0.12 && seed < 0.20) {
-    anchor = uCore2Offset + anchor * 0.4;
+  // 成长：双星——桥接粒子串联两核，两核互绕把身体拉成双瓣。
+  if (uDual > 0.5) {
+    if (seed >= 0.12 && seed < 0.20) {
+      anchor = uCore2Offset + anchor * 0.45;
+    } else if (seed >= 0.20 && seed < 0.26) {
+      float frac = (seed - 0.20) / 0.06;
+      anchor = uCore2Offset * frac + dir * bodyR * 0.3 * radMul;
+    }
+  }
+  // 成长：旋臂（触手状流苏，随成长伸长、缓慢旋转）。
+  float armAlong = (h - 0.75) / 0.25;
+  if (uArms >= 2.0 && layer > 0.5 && h >= 0.75) {
+    float armIdx = floor(mod(seed * 97.0, uArms));
+    float baseAngle = armIdx * 6.2831853 / uArms + uTime * 0.05;
+    float angle = baseAngle + armAlong * 0.9 + seed * 0.3;
+    float armRadius = bodyR * (1.0 + armAlong * (0.8 + uGrowth * 1.8));
+    float yArm = (hash1(seed * 13.7) - 0.5) * armAlong * bodyR * 0.8;
+    anchor = uCore + vec3(cos(angle) * armRadius, yArm, sin(angle) * armRadius);
+  }
+  // 成长：卫星粒子（远轨明亮大粒子，环绕母体）。
+  if (uGrowth > 0.7 && seed >= 0.995) {
+    float ph = hash1(seed * 57.1) * 6.2831853;
+    float orbR = 3.0 + hash1(seed * 77.7) * 1.4;
+    anchor = uCore + vec3(
+      cos(uTime * 0.18 + ph) * orbR,
+      sin(uTime * 0.11 + ph * 2.0) * orbR * 0.3,
+      sin(uTime * 0.18 + ph) * orbR * 0.55);
   }
 
   float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
@@ -263,10 +291,12 @@ uniform float uFormMix;
 uniform float uTime;
 uniform float uEnergy;
 uniform float uPulseBoost;
+uniform float uGrowth;
 attribute float aRef;
 varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
+varying float vSat;
 
 void main() {
   float ref = aRef + 0.5;
@@ -275,6 +305,7 @@ void main() {
   vec3 p = p4.xyz;
   float seed = p4.w;
   float layer = seed < 0.12 ? 0.0 : (seed < 0.86 ? 1.0 : 2.0);
+  float sat = uGrowth > 0.7 && seed >= 0.995 ? 1.0 : 0.0;
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -298,6 +329,7 @@ precision mediump float;
 uniform float uBreathWave;
 uniform float uMoodShift;
 uniform float uBrightness;
+varying float vSat;
 varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
@@ -316,6 +348,7 @@ void main() {
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
   float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55);
   col *= (0.85 + 0.15 * vGlow) * uBrightness;
+  col = mix(col, vec3(1.0), vSat * 0.6); // 卫星粒子亮白
   gl_FragColor = vec4(col * a, a * vAlpha * layerAlpha);
 }
 `;
@@ -422,6 +455,8 @@ export class WebGL2Backend {
       uSymmetry: { value: 0.4 },
       uRing: { value: 0 },
       uDual: { value: 0 },
+      uArms: { value: 1 },
+      uGrowth: { value: 0 },
       uCore2Offset: { value: new THREE.Vector3() },
       uPress: { value: 0 },
       uPressStrength: { value: this.sim.pressStrength },
@@ -461,6 +496,7 @@ export class WebGL2Backend {
         uBreathWave: { value: 0 },
         uMoodShift: { value: 0.5 },
         uBrightness: { value: 1 },
+        uGrowth: { value: 0 },
         uTime: { value: 0 },
         uEnergy: { value: params.energyBase },
         uPulseBoost: { value: 0 },
@@ -523,6 +559,10 @@ export class WebGL2Backend {
     u.uSymmetry.value = state.symmetry;
     u.uRing.value = state.ring;
     u.uDual.value = state.dualCore;
+    u.uArms.value = state.arms;
+    u.uGrowth.value = state.growth;
+    u.uArms.value = state.arms;
+    u.uGrowth.value = state.growth;
     (u.uCore2Offset.value as THREE.Vector3).set(
       state.core2Offset[0], state.core2Offset[1], state.core2Offset[2]);
     u.uPress.value = state.pressRamp;
@@ -540,6 +580,7 @@ export class WebGL2Backend {
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
     m.uBrightness.value = state.brightness;
+    m.uGrowth.value = state.growth;
     m.uMoodShift.value = state.moodShift;
 
     this.gpu.compute();
