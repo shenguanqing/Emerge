@@ -8,6 +8,7 @@ defineProps<{
   mood: string;
   quality: string;
   targetFps: number;
+  life: string;
 }>();
 </script>
 
@@ -15,6 +16,7 @@ defineProps<{
   <div class="diag" aria-live="polite">
     <span class="chip">后端 {{ backend }}</span>
     <span class="chip">{{ mood }}</span>
+    <span v-if="life" class="chip">{{ life }}</span>
     <span class="chip">{{ fps }} FPS</span>
     <span class="chip">{{ particles.toLocaleString() }} 粒子</span>
     <span class="chip">{{ quality }} @ {{ targetFps }}fps</span>

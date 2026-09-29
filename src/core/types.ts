@@ -145,6 +145,22 @@ export interface LifeState {
   clickPos: [number, number, number];
   /** 自发能量脉冲 0..1（可视化突发活跃）。 */
   pulseBoost: number;
+  /** 成长进度 0..1。 */
+  growth: number;
+  /** 环结构显示量 0..1。 */
+  ring: number;
+  /** 双核心 0/1。 */
+  dualCore: number;
+  /** 第二核心偏移（世界坐标）。 */
+  core2Offset: [number, number, number];
+  /** 睡眠倾向 0..1（现实时间驱动）。 */
+  sleepiness: number;
+  /** 环境亮度乘 0..1。 */
+  brightness: number;
+  /** 形体对称度 0..1（DNA）。 */
+  symmetry: number;
+  /** Life ID（诊断显示）。 */
+  lifeId: string;
   /** 感知到的指针位置（世界坐标，含反应延迟）。 */
   pointerPos: [number, number, number];
   /** 感知到的指针速度（世界单位/秒）。 */
@@ -176,6 +192,14 @@ export function createLifeState(): LifeState {
     clickPulse: 0,
     clickPos: [0, 0, 0],
     pulseBoost: 0,
+    growth: 0,
+    ring: 0,
+    dualCore: 0,
+    core2Offset: [0, 0, 0],
+    sleepiness: 0,
+    brightness: 1,
+    symmetry: 0.4,
+    lifeId: '',
     pointerPos: [0, 0, 99],
     pointerVel: [0, 0, 0],
     pointerActive: 0,

@@ -22,6 +22,8 @@ struct Sim {
   data8: vec4f,          // pointerPushMul, pulseBoost, press, pad
   data9: vec4f,          // pressStrength, pad, pad, pad
   clickPos_pulse: vec4f, // click.xyz, clickPulse
+  data10: vec4f,         // symmetry, ring, dual, pad
+  core2Offset: vec4f,    // 第二核心偏移
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -33,14 +35,14 @@ struct Sim {
 fn hash1(n: f32) -> f32 { return fract(sin(n) * 43758.5453123); }
 
 // 有机形体半径：随方向低频起伏的非对称轮廓（与 WebGL2 后端保持一致）。
-fn bodyRadius(dir: vec3f) -> f32 {
+fn bodyRadius(dir: vec3f, symmetry: f32) -> f32 {
   var r = 1.0;
   r = r + 0.24 * sin(2.3 * dir.x + 1.7) * cos(1.9 * dir.y - 0.6);
   r = r + 0.17 * sin(3.1 * dir.z + 4.0);
   r = r + 0.11 * sin(4.7 * dir.x + 2.0) * sin(3.9 * dir.y + 1.0);
   r = r + 0.09 * sin(6.1 * dir.x + 3.7) * cos(5.7 * dir.z - 1.1);
   r = r + 0.07 * sin(2.9 * dir.x + 2.9 * dir.z + 0.5);
-  return r;
+  return mix(r, 1.0, symmetry * 0.6);
 }
 
 // --- Simplex Noise 3D（Ashima Arts / Ian McEwan，公有领域实现，与 GLSL 数值一致） ---
@@ -156,11 +158,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   // 受惊收缩：核心轻微收紧，身体明显收拢（与 WebGL2 后端一致）。
   var contractMul = 1.0 - 0.22 * sim.data7.z;
   if (layer < 0.5) { contractMul = 1.0 - 0.12 * sim.data7.z; }
-  let bodyR = bodyRadius(dir) * bodyBase * breath * contractMul;
+  let bodyR = bodyRadius(dir, sim.data10.x) * bodyBase * breath * contractMul;
   var radMul = mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - breathWave));
   if (layer < 0.5) { radMul = mix(0.16, 0.34, h); }
   if (layer > 0.5 && layer < 1.5) { radMul = mix(0.88, 1.04, h); }
-  let anchor = dir * bodyR * radMul;
+  var anchor = dir * bodyR * radMul;
+
+  // 成长：行星环（身体层 h 窗口展平为环面）。
+  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + sim.data10.y * 0.3) {
+    anchor = dir * bodyBase * 1.55 * breath;
+    anchor.y = anchor.y * 0.14;
+  }
+  // 成长：双核心。
+  if (sim.data10.z > 0.5 && seed >= 0.12 && seed < 0.20) {
+    anchor = sim.core2Offset.xyz + anchor * 0.4;
+  }
 
   var stiffMul = 0.55;
   if (layer < 0.5) { stiffMul = 3.2; }
@@ -230,6 +242,7 @@ struct R {
   data: vec4f,           // pointSizePx, viewportW, viewportH, unused
   data2: vec4f,          // formMix, breathWave, revealT, revealSeconds
   data3: vec4f,          // moodShift, pulseBoost, energy, time
+  data4: vec4f,          // brightness, pad, pad, pad
 };
 
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
@@ -292,7 +305,7 @@ fn fs(vin: VOut) -> @location(0) vec4f {
   if (vin.layer < 0.5) { col = coreCol; layerAlpha = 1.0; }
   if (vin.layer > 0.5 && vin.layer < 1.5) { col = bodyCol; layerAlpha = 0.85; }
   let depthFade = clamp(2.5 / max(vin.position.w, 0.001), 0.2, 2.0);
-  let glow = col * (0.85 + 0.15 * depthFade);
+  let glow = col * (0.85 + 0.15 * depthFade) * r.data4.x;
   return vec4f(glow * a, a * vin.alpha * layerAlpha);
 }
 `;
@@ -342,8 +355,8 @@ export class WebGPUBackend {
   private readonly computeBinds: [GPUBindGroup, GPUBindGroup];
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
   /** [0..15] VP；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds；[24..27] moodShift, pulseBoost, energy, time。 */
-  private readonly renderData = new Float32Array(28);
-  private readonly simData = new Float32Array(52);
+  private readonly renderData = new Float32Array(32);
+  private readonly simData = new Float32Array(64);
   private pointSize: number;
   private dpr = 1;
   private clearAlpha = 1;
@@ -378,11 +391,11 @@ export class WebGPUBackend {
     this.velBuf = [makeBuf(init.velocities), makeBuf(init.velocities)];
 
     this.simUniform = device.createBuffer({
-      size: 208,
+      size: 256,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
-      size: 112,
+      size: 128,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -524,6 +537,12 @@ export class WebGPUBackend {
     this.simData[41] = state.pulseBoost;
     this.simData[42] = state.pressRamp;
     this.simData[44] = this.sim.pressStrength;
+    this.simData[52] = state.symmetry;
+    this.simData[53] = state.ring;
+    this.simData[54] = state.dualCore;
+    this.simData[56] = state.core2Offset[0];
+    this.simData[57] = state.core2Offset[1];
+    this.simData[58] = state.core2Offset[2];
     this.simData[48] = state.clickPos[0];
     this.simData[49] = state.clickPos[1];
     this.simData[50] = state.clickPos[2];
@@ -538,6 +557,7 @@ export class WebGPUBackend {
     this.renderData[25] = state.pulseBoost;
     this.renderData[26] = state.energy;
     this.renderData[27] = state.time;
+    this.renderData[28] = state.brightness;
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 
     const read = this.readIdx;

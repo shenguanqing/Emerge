@@ -25,5 +25,6 @@
 - Phase 8：Tauri 2 桌面壳（无边框、置顶、浮动窗口，WebGL2 后备路径在 WKWebView 生效，60 FPS）；桌面透明合成受 WKWebView 层限制（黑底），完整诊断链与 overlay 合成 workaround 已记录；Windows 待验证。
 - Phase 9：Low/Medium/High/Ultra 四档自适应质量（滞回升降档，Ultra 100k 粒子 @ 120 FPS）与低功耗闲置降帧（60→30→15，交互即时恢复）；缓冲按上限分配，档位切换零开销。
 - 打磨迭代 1（真人反馈「boring」驱动）：修复 WebGPU 后端情绪 uniform 错位（静默失效）；新增点击涟漪与长按吸引场；能量闪烁、自发脉冲可视化与体色情绪偏移。
+- Phase 10a：生命闭环——永久 DNA（Life ID）、成长系统（行星环/双核/粒子成长）、记忆（性格修正）、现实昼夜（睡眠/亮度/夜猫子）、离线回归问候、localStorage 持久化；核心逻辑测试 9/9。
 
 以上为文档初始化，尚未包含应用实现或性能测试结果。

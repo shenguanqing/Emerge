@@ -42,6 +42,10 @@ uniform float uWary;
 uniform float uContract;
 uniform float uEnergy;
 uniform float uPulseBoost;
+uniform float uSymmetry;
+uniform float uRing;
+uniform float uDual;
+uniform vec3 uCore2Offset;
 uniform float uPress;
 uniform float uPressStrength;
 uniform vec3 uClickPos;
@@ -49,6 +53,10 @@ uniform float uClickPulse;
 uniform float uPointerPushMul;
 uniform float uEnergy;
 uniform float uPulseBoost;
+uniform float uSymmetry;
+uniform float uRing;
+uniform float uDual;
+uniform vec3 uCore2Offset;
 uniform float uPress;
 uniform float uPressStrength;
 
@@ -62,7 +70,8 @@ float bodyRadius(vec3 dir) {
   r += 0.11 * sin(4.7 * dir.x + 2.0) * sin(3.9 * dir.y + 1.0);
   r += 0.09 * sin(6.1 * dir.x + 3.7) * cos(5.7 * dir.z - 1.1);
   r += 0.07 * sin(2.9 * dir.x + 2.9 * dir.z + 0.5);
-  return r;
+  // DNA 对称度：越高形体越平滑对称。
+  return mix(r, 1.0, uSymmetry * 0.6);
 }
 
 // --- Simplex Noise 3D（Ashima Arts / Ian McEwan，公有领域实现） ---
@@ -163,6 +172,16 @@ void main() {
                : layer < 1.5 ? mix(0.88, 1.04, h)
                : mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - uBreathWave));
   vec3 anchor = dir * bodyR * radMul;
+
+  // 成长：行星环（身体层粒子按 h 窗口展平为环面）。
+  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + uRing * 0.3) {
+    anchor = dir * uBodyBase * 1.55 * uBreath;
+    anchor.y *= 0.14;
+  }
+  // 成长：双核心（第二核心粒子群绕副核运动）。
+  if (uDual > 0.5 && seed >= 0.12 && seed < 0.20) {
+    anchor = uCore2Offset + anchor * 0.4;
+  }
 
   float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
   // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
@@ -278,6 +297,7 @@ const POINTS_FRAG = /* glsl */ `
 precision mediump float;
 uniform float uBreathWave;
 uniform float uMoodShift;
+uniform float uBrightness;
 varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
@@ -295,7 +315,7 @@ void main() {
   vec3 auraCol = vec3(0.24, 0.40, 0.75) * 0.8;
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
   float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55);
-  col *= (0.85 + 0.15 * vGlow);
+  col *= (0.85 + 0.15 * vGlow) * uBrightness;
   gl_FragColor = vec4(col * a, a * vAlpha * layerAlpha);
 }
 `;
@@ -399,6 +419,10 @@ export class WebGL2Backend {
       uContract: { value: 0 },
       uEnergy: { value: this.params.energyBase },
       uPulseBoost: { value: 0 },
+      uSymmetry: { value: 0.4 },
+      uRing: { value: 0 },
+      uDual: { value: 0 },
+      uCore2Offset: { value: new THREE.Vector3() },
       uPress: { value: 0 },
       uPressStrength: { value: this.sim.pressStrength },
       uClickPos: { value: new THREE.Vector3() },
@@ -436,6 +460,7 @@ export class WebGL2Backend {
         uFormMix: { value: 0 },
         uBreathWave: { value: 0 },
         uMoodShift: { value: 0.5 },
+        uBrightness: { value: 1 },
         uTime: { value: 0 },
         uEnergy: { value: params.energyBase },
         uPulseBoost: { value: 0 },
@@ -495,6 +520,11 @@ export class WebGL2Backend {
     u.uContract.value = state.contract;
     u.uEnergy.value = state.energy;
     u.uPulseBoost.value = state.pulseBoost;
+    u.uSymmetry.value = state.symmetry;
+    u.uRing.value = state.ring;
+    u.uDual.value = state.dualCore;
+    (u.uCore2Offset.value as THREE.Vector3).set(
+      state.core2Offset[0], state.core2Offset[1], state.core2Offset[2]);
     u.uPress.value = state.pressRamp;
     u.uPointerPushMul.value = state.pointerPushMul;
     (u.uClickPos.value as THREE.Vector3).set(
@@ -509,6 +539,7 @@ export class WebGL2Backend {
     m.uTime.value = state.time;
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
+    m.uBrightness.value = state.brightness;
     m.uMoodShift.value = state.moodShift;
 
     this.gpu.compute();

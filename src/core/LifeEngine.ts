@@ -2,6 +2,17 @@ import { createLifeState, type LifeParams, type LifeState } from './types';
 import { PointerPerception, type PointerReading } from './PointerPerception';
 import { EmotionEngine } from './EmotionEngine';
 import { BehaviorEngine } from './BehaviorEngine';
+import { MemoryEngine } from './MemoryEngine';
+import { GrowthEngine } from './GrowthEngine';
+import { timeOfDay } from './TimeSystem';
+import type { LifeDNA } from './DNAEngine';
+
+/** 生命上下文：DNA + 记忆 + 成长（可选；缺省时为无记忆的裸引擎）。 */
+export interface LifeContext {
+  dna: LifeDNA;
+  memory: MemoryEngine;
+  growth: GrowthEngine;
+}
 
 /**
  * 生命引擎：唯一持有模拟时钟与生命状态。
@@ -13,6 +24,9 @@ export class LifeEngine {
   private readonly perception = new PointerPerception();
   private readonly emotion: EmotionEngine;
   private readonly behavior = new BehaviorEngine();
+  private readonly memory: MemoryEngine | null = null;
+  private readonly growth: GrowthEngine | null = null;
+  private readonly dna: LifeDNA | null = null;
   private lastScatter = 0;
   private pointerReading: PointerReading = {
     active: false,
@@ -25,10 +39,30 @@ export class LifeEngine {
   private clickPulse = 0;
   private clickPos: [number, number, number] = [0, 0, 0];
   private pressing = false;
+  private sleepiness = 0;
+  private greetScatter = 0;
+  private sleepyBoost = 0;
 
-  constructor(private readonly params: LifeParams) {
+  constructor(private readonly params: LifeParams, life?: LifeContext) {
     this.state = createLifeState();
     this.emotion = new EmotionEngine(params.energyBase, params.curiosityBase, params.trustBase);
+    if (life) {
+      this.memory = life.memory;
+      this.growth = life.growth;
+      this.dna = life.dna;
+      this.state.symmetry = life.dna.symmetry;
+      this.state.lifeId = life.dna.id;
+      this.memory.beginSession(new Date());
+      this.state.growth = life.growth.state.growth;
+      this.state.ring = life.growth.state.ring;
+      this.state.dualCore = life.growth.state.dualCore ? 1 : 0;
+    }
+  }
+
+  /** 离线回归问候：根据离开时长设定「重新凝聚 + 苏醒」的初始强度。 */
+  wakeFromOffline(elapsedMinutes: number): void {
+    this.greetScatter = Math.min(Math.max(elapsedMinutes / 240, 0), 1);
+    this.sleepyBoost = Math.min(Math.max(elapsedMinutes / 360, 0), 0.7) * 0.8;
   }
 
   /** 提供最新原始指针读数；感知延迟在 update 内平滑。 */
@@ -57,12 +91,6 @@ export class LifeEngine {
     const dt = Math.min(Math.max(dtSeconds, 0), 0.1);
     this.state.time += dt;
     this.state.revealT += dt;
-
-    // 呼吸：相位连续累积，缩放 = 1 + amplitude · (0.5 − 0.5·cos 2π·rate·t)，
-    // 平滑经过 1 → 1+amp → 1，无硬切换。
-    this.state.breathPhase = this.params.breathRate * this.state.time * Math.PI * 2;
-    this.state.breathWave = 0.5 - 0.5 * Math.cos(this.state.breathPhase);
-    this.state.breathScale = 1 + this.params.breathAmplitude * this.state.breathWave;
 
     // 启动凝聚：0.8s 黑场铺垫后旋涡收拢，smoothstep 缓入缓出。
     const raw = Math.min(
@@ -149,5 +177,57 @@ export class LifeEngine {
           (perceived.world[i] - this.state.corePosition[i]) * pull;
       }
     }
+
+    // ---- 现实时间：昼夜影响睡眠倾向、亮度与活动量 ----
+    const tod = timeOfDay(new Date());
+    this.sleepyBoost *= Math.exp(-dt / 60);
+    const sleepTarget = Math.min(1, tod.sleepinessTarget * 0.6 + this.sleepyBoost);
+    this.sleepiness += (sleepTarget - this.sleepiness) * (1 - Math.exp(-dt / 8));
+    this.state.sleepiness = this.sleepiness;
+    let brightness = tod.brightness * (1 - 0.35 * this.sleepiness);
+    if (this.memory && (tod.phase === 'night' || tod.phase === 'lateNight')) {
+      brightness *= 1 + this.memory.nightGlow * 0.3; // 夜猫子：夜间更亮
+    }
+    this.state.brightness = Math.min(brightness, 1.2);
+
+    // 呼吸速率随睡眠倾向放缓（深夜呼吸悠长）。
+    const rateMul = 1 - 0.55 * this.sleepiness;
+    this.state.breathPhase = this.params.breathRate * rateMul * this.state.time * Math.PI * 2;
+    this.state.breathWave = 0.5 - 0.5 * Math.cos(this.state.breathPhase);
+    this.state.breathScale = 1 + this.params.breathAmplitude * this.state.breathWave;
+
+    // ---- 记忆与成长：长期使用塑造性格与形态 ----
+    if (this.memory) {
+      this.memory.tick({
+        dt,
+        active: this.state.pointerActive > 0.3,
+        pointerSpeed: perceivedSpeed,
+        shock,
+        night: tod.phase === 'lateNight',
+      });
+    }
+    if (this.growth && this.memory) {
+      this.growth.update({
+        days: this.memory.growthInputs.days,
+        interactionMinutes: this.memory.state.interactionMinutes,
+        growthBias: this.dna ? this.dna.growthBias : 0.5,
+      });
+      const g = this.growth.state;
+      this.state.growth = g.growth;
+      this.state.ring = g.ring;
+      this.state.dualCore = g.dualCore ? 1 : 0;
+      // 第二核心绕主核心缓慢环绕。
+      const t2 = this.state.time * 0.13;
+      this.state.core2Offset = [
+        Math.sin(t2) * 1.15,
+        0.18 * Math.sin(t2 * 1.7),
+        Math.cos(t2 * 0.9) * 1.15,
+      ];
+    }
+
+    // 离线问候：回归时生命体从松散中重新凝聚、逐渐亮起。
+    this.greetScatter *= Math.exp(-dt / 2.2);
+    if (this.greetScatter < 0.01) this.greetScatter = 0;
+    this.state.scatter = Math.max(this.scatter, this.greetScatter);
   }
 }

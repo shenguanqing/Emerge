@@ -10,6 +10,10 @@ import { WebGPUBackend } from './render/backends/webgpu/WebGPUBackend';
 import { probeCapabilities } from './render/capability';
 import { PointerSystem } from './input/PointerSystem';
 import { QUALITY_TIERS, QualityManager, type QualityTier } from './core/QualityManager';
+import { applyDNA, generateDNA, type LifeDNA } from './core/DNAEngine';
+import { MemoryEngine, createMemoryState } from './core/MemoryEngine';
+import { GrowthEngine } from './core/GrowthEngine';
+import { defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
 import Diagnostics from './ui/Diagnostics.vue';
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -22,6 +26,7 @@ const diag = reactive({
   mood: '平静',
   quality: 'high',
   targetFps: 60,
+  life: '',
 });
 
 const quality = new QualityManager();
@@ -53,9 +58,12 @@ function resize(): void {
 /** 应用质量档位：粒子数、点尺寸、DPR。 */
 function applyTier(tier: QualityTier): void {
   const cfg = QUALITY_TIERS[tier];
-  backend?.setActiveCount(cfg.particles);
+  // 成长乘数：生命体越成熟，同档位下粒子越多。
+  const g = engine?.getState().growth ?? 0;
+  const count = Math.min(Math.round(cfg.particles * (0.85 + 0.4 * g)), 100_000);
+  backend?.setActiveCount(count);
   backend?.setPointSize(cfg.pointSize);
-  diag.particles = cfg.particles;
+  diag.particles = count;
   diag.quality = tier;
   resize();
 }
@@ -67,6 +75,36 @@ onMounted(async () => {
   // 桌面透明模式：Tauri 窗口内无黑底，生命体直接漂浮在桌面上。
   const isDesktop = '__TAURI_INTERNALS__' in window;
   document.documentElement.classList.toggle('desktop-transparent', isDesktop);
+
+  // ---- 生命存档：DNA 永久保存，记忆与年龄跨会话累积 ----
+  const storage = defaultStorage();
+  const nowDate = new Date();
+  let dna: LifeDNA;
+  let memory: MemoryEngine;
+  let growth: GrowthEngine;
+  let offlineMinutes = 0;
+  const loaded = loadLife(storage);
+  if (loaded.ok) {
+    dna = loaded.snapshot.dna;
+    memory = new MemoryEngine(loaded.snapshot.memory);
+    growth = new GrowthEngine({
+      days: memory.growthInputs.days,
+      interactionMinutes: memory.state.interactionMinutes,
+      growthBias: dna.growthBias,
+    });
+    offlineMinutes = Math.max(0, (Date.now() - loaded.snapshot.lastActiveTime) / 60000);
+  } else {
+    dna = generateDNA(nowDate.getTime());
+    memory = new MemoryEngine(createMemoryState(nowDate));
+    growth = new GrowthEngine({ days: 1, interactionMinutes: 0, growthBias: dna.growthBias });
+  }
+  const params = { ...DEFAULT_LIFE_PARAMS };
+  const simParams = { ...DEFAULT_SIMULATION_PARAMS };
+  applyDNA(dna, params, simParams);
+  const ageDays = Math.max(0, Math.floor((Date.now() - dna.bornAt) / 86400000));
+  diag.life = `${dna.id} · ${ageDays}天 · ${growth.state.stage}`;
+  diag.particles = Math.round(params.particleCount * growth.state.particleMul);
+  void storage;
 
   // 桌面诊断信标：把运行状态周期性上报给本地监听器（仅桌面模式）。
   if (isDesktop) {
@@ -111,7 +149,8 @@ onMounted(async () => {
     backendId = 'webgl2';
   }
 
-  engine = new LifeEngine(DEFAULT_LIFE_PARAMS);
+  engine = new LifeEngine(params, { dna, memory, growth });
+  if (offlineMinutes >= 10) engine.wakeFromOffline(offlineMinutes);
   pointer = new PointerSystem();
   pointer.attach(canvas);
 
@@ -122,7 +161,7 @@ onMounted(async () => {
       if (!active) diag.note = 'WebGPU 初始化失败，尝试回退 WebGL2';
     }
     if (!active && (backendId === 'webgl2' || backendId === 'none') && caps.webgl2.available) {
-      active = new WebGL2Backend(canvas, DEFAULT_LIFE_PARAMS, DEFAULT_SIMULATION_PARAMS, isDesktop);
+      active = new WebGL2Backend(canvas, params, DEFAULT_SIMULATION_PARAMS, isDesktop);
     }
   } catch (err) {
     diag.backend = '初始化失败';
@@ -179,6 +218,9 @@ onMounted(async () => {
       const st = lifeEngine.getState();
       diag.mood =
         st.scared > 0.45 ? '受惊' : st.curious > 0.45 ? '好奇' : st.contract > 0.2 ? '警觉' : '平静';
+      diag.particles = Math.round(
+        QUALITY_TIERS[quality.tier].particles * (0.85 + 0.4 * st.growth),
+      );
     }
 
     // 低功耗帧限制：闲置时 60→30→15，模拟步长按真实间隔保持速度一致。
@@ -197,6 +239,23 @@ onMounted(async () => {
     activeBackend.frame(lifeEngine.getState(), simDt);
   };
   rafId = requestAnimationFrame(loop);
+
+  // 自动存档：30 秒一次 + 页面隐藏/关闭时。
+  const save = () => {
+    saveLife(storage, {
+      schemaVersion: SCHEMA_VERSION,
+      dna,
+      memory: memory.state,
+      lastActiveTime: Date.now(),
+    });
+  };
+  save();
+  const saveTimer = window.setInterval(save, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') save();
+  });
+  window.addEventListener('beforeunload', save);
+  void saveTimer;
 });
 
 onBeforeUnmount(() => {
@@ -223,6 +282,7 @@ onBeforeUnmount(() => {
       :mood="diag.mood"
       :quality="diag.quality"
       :target-fps="diag.targetFps"
+      :life="diag.life"
     />
   </main>
 </template>

@@ -8,7 +8,8 @@
     "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
     "app:build": "npm run build && tauri build --debug --no-bundle",
-    "app:dev": "tauri dev"
+    "app:dev": "tauri dev",
+    "test:core": "tsx --test src/core/life-core.test.ts"
   },
   "dependencies": {
     "three": "^0.186.1",
@@ -19,6 +20,7 @@
     "@types/three": "^0.186.0",
     "@vitejs/plugin-vue": "^6.0.9",
     "@webgpu/types": "^0.1.74",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
     "vite": "^8.3.1",
     "vue-tsc": "^2.1.10"
