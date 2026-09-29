@@ -11,7 +11,7 @@
 | Phase 5 Pointer Force Field（✅ 已完成） | 指针坐标、速度、靠近感知、反应延迟与冲击 | 慢速靠近与高速划过有可辨差异 |
 | Phase 6 驱散与重新聚合（✅ 已完成） | 核心保留、旋涡式回归与拖尾 | 目标 2–4 秒自然重组，无位置瞬移 |
 | Phase 7 Behavior / Emotion（✅ 已完成） | 自主 Idle，Curious / Scared / Calm，连续参数 | 平滑转换，受惊后短期安全距离增加，无需用户输入仍有生命感 |
-| Phase 8 透明桌面窗口（⚠️ 部分通过） | Tauri 2，macOS / Windows 透明无边框，基础交互与退出入口 | macOS：窗口/置顶/交互/退出 ✅，透明合成 ⚠️（上游缺陷 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)，诊断与应用侧 workaround 已记录）；Windows：待用户在 Windows 环境验证 |
+| Phase 8 透明桌面窗口（⚠️ 部分通过） | Tauri 2，macOS / Windows 透明无边框，系统托盘（显示/隐藏/置顶/穿透/退出），窗口位置记忆 | macOS：托盘/置顶/穿透开关/交互/退出/位置记忆 ✅，透明合成 ⚠️（上游缺陷 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)，诊断与应用侧 workaround 已记录）；Windows：待用户在 Windows 环境验证 |
 | Phase 9 性能优化（✅ 已完成） | 自适应档位、低功耗、隐藏/恢复、资源稳定性 | Ultra 100k @ 120 FPS；四档滞回升降档；闲置 60→30→15 低功耗调度 |
 | Phase 10a 生命闭环（✅ 已完成） | DNA、成长、记忆、现实时间/离线、持久化（LifeStorage） | 核心测试 9/9；DNA 持久化与刷新一致；成长/双核/环/昼夜/离线问候截图可辨 |
 | Phase 10b-1 音乐响应（✅ 已完成） | 文件输入 → Bass/Mid/Treble/Beat/能量 → 行为参数（身体脉冲/能量波/兴奋） | 合成节拍音端到端验证；Web 系统音频受浏览器安全模型限制（记录） |
