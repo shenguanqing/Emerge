@@ -4,30 +4,42 @@
   "version": "0.1.0",
   "identifier": "com.shenguanqing.emerge",
   "build": {
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
         "label": "main",
         "title": "Emerge",
-        "width": 460,
-        "height": 460,
+        "width": 1440,
+        "height": 900,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
-        "resizable": true,
+        "resizable": false,
         "shadow": false,
-        "x": 526,
-        "y": 261
+        "focus": false,
+        "skipTaskbar": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     },
-    "macOSPrivateApi": true
+    "macOSPrivateApi": true,
+    "withGlobalTauri": true
   },
   "bundle": {
-    "active": false
+    "active": false,
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

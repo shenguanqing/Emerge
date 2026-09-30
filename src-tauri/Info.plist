@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.shenguanqing.emerge</string>
+  <key>CFBundleName</key>
+  <string>Emerge</string>
+  <key>CFBundleDisplayName</key>
+  <string>Emerge</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Emerge 需要「屏幕与系统音频录制」权限，以便识别系统正在播放的音乐并驱动生命体的节奏与情绪。不会保存或上传任何屏幕画面或音频。</string>
+</dict>
+</plist>

@@ -6,6 +6,14 @@
 
 export type QualityTier = 'low' | 'medium' | 'high' | 'ultra';
 
+/** 托盘/诊断用中文档位名。 */
+export const TIER_LABELS: Record<QualityTier, string> = {
+  low: '画质低',
+  medium: '画质中',
+  high: '画质高',
+  ultra: '画质极高',
+};
+
 export interface TierConfig {
   /** 活跃粒子数（缓冲按 MAX_PARTICLES 分配，仅渲染前 N 个）。 */
   particles: number;
@@ -18,10 +26,10 @@ export interface TierConfig {
 export const MAX_PARTICLES = 100_000;
 
 export const QUALITY_TIERS: Record<QualityTier, TierConfig> = {
-  low: { particles: 8192, pointSize: 2.2, maxDpr: 1.5 },
-  medium: { particles: 16384, pointSize: 2.6, maxDpr: 1.75 },
-  high: { particles: 32768, pointSize: 3.0, maxDpr: 2 },
-  ultra: { particles: MAX_PARTICLES, pointSize: 3.0, maxDpr: 2 },
+  low: { particles: 12288, pointSize: 2.4, maxDpr: 1.5 },
+  medium: { particles: 24576, pointSize: 2.8, maxDpr: 1.75 },
+  high: { particles: 49152, pointSize: 3.2, maxDpr: 2 },
+  ultra: { particles: MAX_PARTICLES, pointSize: 3.2, maxDpr: 2 },
 };
 
 const TIER_ORDER: QualityTier[] = ['low', 'medium', 'high', 'ultra'];
@@ -45,7 +53,7 @@ export class QualityManager {
   /** 升档阈值：平均 FPS 高于该值持续 fastSeconds 升一档。 */
   upFps = 58;
   /** 档位切换最小间隔（秒），防止抖动。 */
-  minDwell = 4;
+  minDwell = 6;
 
   private slowTimer = 0;
   private fastTimer = 0;
@@ -58,7 +66,13 @@ export class QualityManager {
    * @param fps 当前滑动窗口平均帧率
    * @param idleSeconds 距上次用户交互的秒数
    */
-  sample(fps: number, idleSeconds: number, dt: number): QualitySampleResult {
+  /**
+   * 每帧采样。
+   * @param fps 当前滑动窗口平均帧率
+   * @param idleSeconds 距上次用户交互的秒数
+   * @param growth 生命成长 0..1：成长越高，允许的最低档越高（避免身体变大粒子被砍稀）
+   */
+  sample(fps: number, idleSeconds: number, dt: number, growth = 0): QualitySampleResult {
     const before: [QualityTier, number] = [this.tier, this.targetFps];
 
     // ---- 低功耗帧调度：闲置逐步降帧，交互立即恢复 ----
@@ -79,7 +93,11 @@ export class QualityManager {
     // ---- 滞回升降档（仅活跃期评估）----
     this.dwell += dt;
     const active = idleSeconds < 5;
-    if (this.dwell >= this.minDwell && active) {
+    if (!active || before[1] !== this.targetFps) {
+      // 闲置限帧和唤醒窗口不是持续 GPU 性能不足，不能累计到下一次交互。
+      this.slowTimer = 0;
+      this.fastTimer = 0;
+    } else if (this.dwell >= this.minDwell) {
       if (fps < this.downFps) {
         this.slowTimer += dt;
         this.fastTimer = 0;
@@ -92,7 +110,9 @@ export class QualityManager {
       }
 
       const idx = TIER_ORDER.indexOf(this.tier);
-      if (this.slowTimer >= 2 && idx > 0) {
+      // 成长保底：身体越大越不允许砍到稀疏档。
+      const minIdx = growth >= 0.7 ? 2 : growth >= 0.35 ? 1 : 0;
+      if (this.slowTimer >= 3.5 && idx > minIdx) {
         this.tier = TIER_ORDER[idx - 1];
         this.dwell = 0;
         this.slowTimer = 0;
@@ -116,4 +136,12 @@ export class QualityManager {
     this.tier = tier;
     this.dwell = 0;
   }
+}
+
+/** 按实际粒子预算补偿点面积，避免降档同时减少数量和可见覆盖。 */
+export function qualityAppearance(tier: QualityTier, growth: number): { count: number; pointSize: number } {
+  const mul = 0.7 + 1.1 * Math.max(0, Math.min(1, growth));
+  const count = Math.min(Math.round(QUALITY_TIERS[tier].particles * mul), MAX_PARTICLES);
+  const reference = Math.min(Math.round(QUALITY_TIERS.high.particles * mul), MAX_PARTICLES);
+  return { count, pointSize: QUALITY_TIERS.high.pointSize * Math.sqrt(reference / count) };
 }

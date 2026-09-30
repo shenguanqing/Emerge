@@ -96,7 +96,7 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
   curlStrength: 0.85,
   curlFrequency: 0.5,
   curlSpeed: 0.06,
-  bodyBase: 1.35,
+  bodyBase: 0.85,
   swirlBase: 2.6,
   pointerRadius: 2.6,
   pointerPush: 1.8,

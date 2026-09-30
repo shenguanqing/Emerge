@@ -7,9 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
-    "app:build": "npm run build && tauri build --debug --no-bundle",
+    "app:build": "tauri build --debug --no-bundle",
     "app:dev": "tauri dev",
-    "test:core": "tsx --test src/core/life-core.test.ts"
+    "test:core": "node --import tsx --test src/core/life-core.test.ts"
   },
   "dependencies": {
     "three": "^0.186.1",

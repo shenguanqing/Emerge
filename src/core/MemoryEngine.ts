@@ -5,12 +5,12 @@
  */
 
 export interface MemoryState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   /** 启动过的不同天数（YYYY-MM-DD 去重）。 */
   daysSeen: string[];
   /** 累计陪伴分钟。 */
   totalMinutes: number;
-  /** 累计互动分钟（指针活跃）。 */
+  /** 累计有效温和互动分钟（附近真实动作或短暂回应）。 */
   interactionMinutes: number;
   /** 累计温和互动分钟（低速平稳互动）。 */
   gentleMinutes: number;
@@ -20,12 +20,18 @@ export interface MemoryState {
   nightMinutes: number;
   /** 最近一次会话日期。 */
   lastVisitDay: string;
+  musicMinutes: number;
+  musicCredit: number;
+  interactionCredit: number;
+  growthFloor: number;
+  daily: { day: string; musicMinutes: number; interactionMinutes: number };
+
 }
 
 export function createMemoryState(now: Date): MemoryState {
   const day = dayKey(now);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     daysSeen: [day],
     totalMinutes: 0,
     interactionMinutes: 0,
@@ -33,6 +39,8 @@ export function createMemoryState(now: Date): MemoryState {
     scareCount: 0,
     nightMinutes: 0,
     lastVisitDay: day,
+    musicMinutes: 0, musicCredit: 0, interactionCredit: 0, growthFloor: 0,
+    daily: { day, musicMinutes: 0, interactionMinutes: 0 },
   };
 }
 
@@ -55,10 +63,18 @@ export interface MemoryTick {
   shock: number;
   /** 当前是否夜间（23:00–5:00）。 */
   night: boolean;
+  visible?: boolean;
+  engaged?: boolean;
+  musicActive?: boolean;
+  musicEnergy?: number;
+  date?: Date;
+  /** 持续音频门控用真实秒数，时间加速不能把短音效变成音乐。 */
+  realDt?: number;
 }
 
 export class MemoryEngine {
   readonly state: MemoryState;
+  private audibleSeconds = 0;
 
   constructor(state: MemoryState) {
     this.state = state;
@@ -75,11 +91,36 @@ export class MemoryEngine {
   }
 
   tick(inp: MemoryTick): void {
+    if (inp.visible === false || !Number.isFinite(inp.dt) || inp.dt <= 0) {
+      this.audibleSeconds = 0;
+      return;
+    }
+    if (inp.date) this.beginSession(inp.date);
+    const day = this.state.lastVisitDay;
+    // 只在日期向前推进时换日，回拨系统时间不能重复领取每日高权重。
+    if (day > this.state.daily.day) this.state.daily = { day, musicMinutes: 0, interactionMinutes: 0 };
     const minutes = inp.dt / 60;
     this.state.totalMinutes += minutes;
-    if (inp.active) {
+    const gentle = inp.active && inp.pointerSpeed < 1.5 && inp.shock === 0
+      && (inp.pointerSpeed > 0.02 || inp.engaged === true);
+    if (gentle) {
       this.state.interactionMinutes += minutes;
-      if (inp.pointerSpeed < 1.5) this.state.gentleMinutes += minutes;
+      this.state.gentleMinutes += minutes;
+      const before = this.state.daily.interactionMinutes;
+      this.state.daily.interactionMinutes += minutes;
+      this.state.interactionCredit += dailyCredit(before + minutes, 20) - dailyCredit(before, 20);
+    }
+    const audible = inp.musicActive === true && Number.isFinite(inp.musicEnergy) && inp.musicEnergy! > 0.04;
+    const realDt = Math.max(0, inp.realDt ?? inp.dt);
+    const beforeAudible = this.audibleSeconds;
+    this.audibleSeconds = audible ? beforeAudible + realDt : 0;
+    // 连续两秒有声音才计时；不按音量或节拍数加分。
+    if (audible && this.audibleSeconds > 2 && realDt > 0) {
+      const eligible = Math.min(realDt, this.audibleSeconds - 2) / realDt * minutes;
+      this.state.musicMinutes += eligible;
+      const before = this.state.daily.musicMinutes;
+      this.state.daily.musicMinutes += eligible;
+      this.state.musicCredit += dailyCredit(before + eligible, 30) - dailyCredit(before, 30);
     }
     if (inp.shock > 0.3) this.state.scareCount += 1;
     if (inp.night) this.state.nightMinutes += minutes;
@@ -99,7 +140,16 @@ export class MemoryEngine {
   }
 
   /** 成长输入：陪伴天数与互动分钟归一。 */
-  get growthInputs(): { days: number; interactionMinutes: number } {
-    return { days: this.state.daysSeen.length, interactionMinutes: this.state.interactionMinutes };
+  get growthInputs() {
+    return { days: this.state.daysSeen.length, interactionMinutes: this.state.interactionCredit,
+      companionMinutes: this.state.totalMinutes, musicMinutes: this.state.musicCredit,
+      growthFloor: this.state.growthFloor };
   }
+
+  get musicAffinity(): number { return clamp01(this.state.musicMinutes / 180); }
+}
+
+/** 每日前 limit 分钟全额计分，之后指数递减、最多再贡献 10 分钟。 */
+export function dailyCredit(minutes: number, limit: number): number {
+  return Math.min(minutes, limit) + (minutes > limit ? 10 * (1 - Math.exp(-(minutes - limit) / 30)) : 0);
 }

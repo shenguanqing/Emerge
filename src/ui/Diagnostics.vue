@@ -1,5 +1,8 @@
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue';
+import { TIER_LABELS, type QualityTier } from '../core/QualityManager';
+
+const props = defineProps<{
   backend: string;
   note: string;
   fps: number;
@@ -10,6 +13,10 @@ defineProps<{
   targetFps: number;
   life: string;
 }>();
+
+const qualityLabel = computed(
+  () => TIER_LABELS[props.quality as QualityTier] ?? props.quality,
+);
 </script>
 
 <template>
@@ -19,7 +26,7 @@ defineProps<{
     <span v-if="life" class="chip">{{ life }}</span>
     <span class="chip">{{ fps }} FPS</span>
     <span class="chip">{{ particles.toLocaleString() }} 粒子</span>
-    <span class="chip">{{ quality }} @ {{ targetFps }}fps</span>
+    <span class="chip">{{ qualityLabel }} @ {{ targetFps }}fps</span>
     <span class="chip">DPR {{ dpr.toFixed(2) }}</span>
     <span v-if="note" class="note">{{ note }}</span>
   </div>

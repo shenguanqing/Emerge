@@ -14,7 +14,7 @@ struct Sim {
   data2: vec4f,          // coreG, curlStrength, curlFreq, curlSpeed
   data3: vec4f,          // count, pad, pad, pad
   data4: vec4f,          // formMix, breathWave, revealT, revealSeconds
-  data5: vec4f,          // bodyBase, swirlBase, pad, pad
+  data5: vec4f,          // bodyBase, swirlBase, musicBass, musicTreble
   pointerPos_act: vec4f, // pointer.xyz, active(0..1)
   pointerVel_pad: vec4f, // pointerVel.xyz, pad
   data6: vec4f,          // pointerRadius, pointerPush, impactSpeed, impactPush
@@ -141,6 +141,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let curlFreq = sim.data2.z;
   let curlSpeed = sim.data2.w;
   let bodyBase = sim.data5.x;
+  let sizeN = bodyBase / 0.85;
   let swirlBase = sim.data5.y;
   let formMix = sim.data4.x;
   let breathWave = sim.data4.y;
@@ -161,18 +162,42 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   if (layer < 0.5) { contractMul = 1.0 - 0.12 * sim.data7.z; }
   let bodyR = bodyRadius(dir, sim.data10.x) * bodyBase * breath * contractMul;
   var radMul = mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - breathWave));
-  if (layer < 0.5) { radMul = mix(0.16, 0.34, h); }
+  if (layer < 0.5) { radMul = mix(0.24, 0.46, h); }
   if (layer > 0.5 && layer < 1.5) { radMul = mix(0.88, 1.04, h); }
   var anchor = dir * bodyR * radMul;
 
-  // 成长：行星环（身体层 h 窗口展平为环面）。
-  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + sim.data10.y * 0.3) {
+  // 成长：行星环（身体层 h 窗口展平为环面，与 WebGL2 同窗口）。
+  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + sim.data10.y * 0.13) {
     anchor = dir * bodyBase * 1.55 * breath;
-    anchor.y = anchor.y * 0.14;
+    anchor.y = anchor.y * 0.12;
   }
-  // 成长：双核心。
-  if (sim.data10.z > 0.5 && seed >= 0.12 && seed < 0.20) {
-    anchor = sim.core2Offset.xyz + anchor * 0.4;
+  // 成长：双星——副核 + 桥接粒子串联两核，身体拉成双瓣（与 WebGL2 一致）。
+  if (sim.data10.z > 0.5) {
+    if (seed >= 0.12 && seed < 0.20) {
+      anchor = sim.core2Offset.xyz + anchor * 0.45;
+    } else if (seed >= 0.20 && seed < 0.26) {
+      let frac = (seed - 0.20) / 0.06;
+      anchor = sim.core2Offset.xyz * frac + dir * bodyR * 0.3 * radMul;
+    }
+  }
+  // 成长：旋臂（触手状流苏，随成长伸长、缓慢旋转；与 WebGL2 一致）。
+  if (sim.data10.w >= 2.0 && layer > 0.5 && h >= 0.75) {
+    let armAlong = (h - 0.75) / 0.25;
+    let armIdx = floor((seed * 97.0) % sim.data10.w);
+    let baseAngle = armIdx * 6.2831853 / sim.data10.w + time * 0.05;
+    let angle = baseAngle + armAlong * 0.9 + seed * 0.3;
+    let armRadius = bodyBase * (0.8 + armAlong * 0.75);
+    let yArm = (hash1(seed * 13.7) - 0.5) * armAlong * bodyR * 0.8;
+    anchor = vec3f(cos(angle) * armRadius, yArm, sin(angle) * armRadius);
+  }
+  // 成长：卫星粒子（远轨明亮大粒子，环绕母体）；轨道随团大小缩放。
+  if (sim.data11.x > 0.7 && seed >= 0.995) {
+    let ph = hash1(seed * 57.1) * 6.2831853;
+    let orbR = (1.2 + hash1(seed * 77.7) * 0.25) * sizeN;
+    anchor = vec3f(
+      cos(time * 0.18 + ph) * orbR,
+      sin(time * 0.11 + ph * 2.0) * orbR * 0.3,
+      sin(time * 0.18 + ph) * orbR * 0.55);
   }
 
   var stiffMul = 0.55;
@@ -182,51 +207,77 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
   var softMul = mix(1.0, 0.15, sim.data7.x);
   if (layer < 0.5) { softMul = mix(1.0, 0.6, sim.data7.x); }
+  let musicBass = sim.data5.z;
+  let musicTreble = sim.data5.w;
+  let pulseBoost = sim.data8.y;
+  // 音乐时外壳略软，便于涨落；静音不改形态。
+  let musicPush = max(0.0, musicBass - 0.03) + max(0.0, pulseBoost - 0.05) * 0.5;
+  softMul *= (1.0 - 0.28 * musicPush);
   let goal = core + anchor;
   var force = (goal - p) * (shellK * stiffMul * softMul);
 
   // 核心长程吸引。
   let toCore = core - p;
-  let dist = length(toCore) + 0.25;
-  force = force + (toCore / dist) * (coreG / dist);
+  let dist = length(toCore) + 0.25 * sizeN;
+  force = force + (toCore / dist) * (coreG * sizeN * sizeN / dist);
 
   // 凝聚期旋涡：绕竖轴的切向力，离核越远越强，随成形衰减消失。
   let swirl = max(1.0 - formMix, sim.data7.x * 0.85) * swirlBase;
   let tangent = normalize(cross(vec3f(0.0, 1.0, 0.0), toCore) + vec3f(1e-5, 0.0, 0.0));
-  force = force + tangent * swirl * smoothstep(5.0, 0.5, dist);
+  force = force + tangent * swirl * sizeN * smoothstep(5.0, 0.5, dist);
+
+  // ---- 音乐动作：幅度随团大小缩放 ----
+  let fromCore = -toCore;
+  let dCore = length(fromCore) + 1e-4;
+  let outward = fromCore / dCore;
+
+  force = force + outward * (musicBass * 7.5 * sizeN) * (0.35 + 0.65 * (layer / 2.0));
+  force = force + outward * (pulseBoost * 9.0 * sizeN) * (0.5 + 0.5 * (layer / 2.0));
+  let flowPos2 = p * (curlFreq * 1.6) + vec3f(time * 0.2, time * 0.13, time * (curlSpeed + musicTreble * 0.35));
+  var trebleMul = 0.25;
+  if (layer > 0.5 && layer < 1.5) { trebleMul = 0.8; }
+  if (layer > 1.5) { trebleMul = 1.8; }
+  force = force + curlNoise(flowPos2) * (musicTreble * 3.2 * trebleMul * sizeN);
+  force = force + tangent * (sim.data7.w * 1.6 * sizeN) * smoothstep(4.5, 0.4, dist);
 
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
   let flowPos = p * curlFreq + vec3f(0.0, 0.0, time * curlSpeed * (1.0 + 1.2 * sim.data8.y));
   var curlMul = 1.5;
   if (layer < 0.5) { curlMul = 0.3; }
   if (layer > 0.5 && layer < 1.5) { curlMul = 1.0; }
-  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * (1.0 + 0.7 * sim.data8.y) * curlMul);
+  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * (1.0 + 0.7 * sim.data8.y) * curlMul * sizeN);
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   if (sim.pointerPos_act.w > 0.01) {
     let toP = sim.pointerPos_act.xyz - p;
     let dP = length(toP) + 1e-4;
-    let influence = smoothstep(sim.data6.x, 0.0, dP);
+    let influence = smoothstep(sim.data6.x * sizeN, 0.0, dP);
     let away = -toP / dP;
     let speed = length(sim.pointerVel_pad.xyz);
     let impact = smoothstep(sim.data6.z, sim.data6.z * 2.5, speed) * influence;
     let waryMul = 1.0 + sim.data7.y * 0.6;
     let pushMul = influence * sim.data6.y * sim.data8.x * waryMul * (1.0 - sim.data8.z);
-    force = force + away * (pushMul + impact * sim.data6.w * 3.0);
-    force = force + sim.pointerVel_pad.xyz * impact * 0.9;
+    force = force + away * (pushMul + impact * sim.data6.w * 3.0) * sizeN;
+    force = force + sim.pointerVel_pad.xyz * impact * 0.9 * sizeN;
   }
 
   // 长按吸引场：粒子围向按压点（交互把玩）。
   if (sim.data8.z > 0.01) {
     let toPress = sim.pointerPos_act.xyz - p;
     let dPress = length(toPress) + 1e-4;
-    let pin = smoothstep(sim.data6.x + 0.6, 0.0, dPress);
-    force = force + (toPress / dPress) * (sim.data8.z * sim.data9.x * pin);
+    let pin = smoothstep((sim.data6.x + 0.6) * sizeN, 0.0, dPress);
+    force = force + (toPress / dPress) * (sim.data8.z * sim.data9.x * pin * sizeN);
   }
 
   // 点击涟漪：从点击点向外的单次冲击波。
   let dcl = length(p - sim.clickPos_pulse.xyz) + 1e-4;
-  force = force + ((p - sim.clickPos_pulse.xyz) / dcl) * (smoothstep(2.4, 0.0, dcl) * sim.clickPos_pulse.w * 26.0);
+  force = force + ((p - sim.clickPos_pulse.xyz) / dcl) * (smoothstep(2.4 * sizeN, 0.0, dcl) * sim.clickPos_pulse.w * 26.0 * sizeN);
+
+  // 外围回收场：超出当前形态包络后渐进收拢，缩小设置也约束驱散。
+  let envelope = max(bodyBase * 2.6 * breath, length(anchor) + bodyBase * 0.6);
+  let excess = max(0.0, dCore - envelope);
+  force = force - outward * excess * shellK * 4.0;
+  force = force - v * smoothstep(0.0, max(bodyBase, 0.01), excess) * 6.0;
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   v = (v + force * dt) * exp(-damping * dt);
@@ -244,6 +295,9 @@ struct R {
   data2: vec4f,          // formMix, breathWave, revealT, revealSeconds
   data3: vec4f,          // moodShift, pulseBoost, energy, time
   data4: vec4f,          // brightness, growth, pad, pad
+  colCore: vec4f,
+  colBody: vec4f,
+  colAura: vec4f,
 };
 
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
@@ -288,28 +342,36 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   result.uv = corner;
   result.layer = layer;
   result.alpha = reveal * mix(0.7, 1.0, r.data2.x) * (1.0 + r.data3.z * 0.2 * tw);
+  // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGL2 后端一致）。
+  result.glowBoost = (0.70 + 0.60 * hash1(p4.w * 91.7 + 2.1))
+                   * (1.0 + r.data3.y * 0.18 + r.data3.z * 0.14 * tw);
+  // 卫星标记：远轨亮金大粒子（与 WebGL2 一致）。
+  result.sat = select(0.0, 1.0, r.data4.y > 0.7 && seed >= 0.995);
   return result;
 }
 
 @fragment
 fn fs(vin: VOut) -> @location(0) vec4f {
   let d = length(vin.uv);
-  var a = smoothstep(1.0, 0.24, d);
-  a = 0.30 + 0.70 * a * a;
+  // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
+  let s = smoothstep(1.0, 0.32, d);
+  var a = 0.20 + 0.80 * s * s;
+  let hot = smoothstep(0.50, 0.05, d); // 白热火花芯
 
-  // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
+  // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
   let breathWave = r.data2.y;
-  let coreCol = mix(vec3f(0.90, 0.95, 1.0), vec3f(1.0, 0.96, 0.9), r.data3.x * 0.35)
-              * (1.6 + 1.0 * breathWave);
-  let bodyCol = mix(vec3f(0.42, 0.62, 0.95), vec3f(0.50, 0.78, 1.0), r.data3.x * 0.6) * 1.35;
-  let auraCol = vec3f(0.24, 0.40, 0.75) * 0.8;
+  let coreCol = mix(r.colCore.xyz, r.colCore.xyz * vec3f(1.0, 0.97, 0.92), r.data3.x * 0.35)
+              * (1.20 + 0.60 * breathWave);
+  let bodyCol = mix(r.colBody.xyz, r.colBody.xyz * vec3f(1.0, 1.12, 1.18), r.data3.x * 0.25) * 1.38;
+  let auraCol = r.colAura.xyz * (0.9 + r.data4.z * 0.85);
   var col = auraCol;
-  var layerAlpha = 0.55;
+  var layerAlpha = 0.55 + r.data4.z * 0.25;
   if (vin.layer < 0.5) { col = coreCol; layerAlpha = 1.0; }
   if (vin.layer > 0.5 && vin.layer < 1.5) { col = bodyCol; layerAlpha = 0.85; }
   let depthFade = clamp(2.5 / max(vin.position.w, 0.001), 0.2, 2.0);
-  var glow = col * (0.85 + 0.15 * depthFade) * r.data4.x;
-  glow = mix(glow, vec3f(1.0), vin.sat * 0.6); // 卫星粒子亮白
+  var glow = mix(col, vec3f(1.0, 0.94, 0.78), hot * 0.50) // 火花芯烧白
+           * (0.85 + 0.15 * depthFade) * r.data4.x * vin.glowBoost;
+  glow = mix(glow, vec3f(1.0, 0.96, 0.82), vin.sat * 0.55); // 卫星粒子亮金白
   return vec4f(glow * a, a * vin.alpha * layerAlpha);
 }
 `;
@@ -359,7 +421,7 @@ export class WebGPUBackend {
   private readonly computeBinds: [GPUBindGroup, GPUBindGroup];
   private readonly renderBinds: [GPUBindGroup, GPUBindGroup];
   /** [0..15] VP；[16..19] pointSizePx, viewportW, viewportH, unused；[20..23] formMix, breathWave, revealT, revealSeconds；[24..27] moodShift, pulseBoost, energy, time。 */
-  private readonly renderData = new Float32Array(32);
+  private readonly renderData = new Float32Array(44);
   private readonly simData = new Float32Array(64);
   private pointSize: number;
   private dpr = 1;
@@ -399,7 +461,7 @@ export class WebGPUBackend {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.renderUniform = device.createBuffer({
-      size: 128,
+      size: 176,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -451,6 +513,19 @@ export class WebGPUBackend {
     this.renderBinds = [mkRenderBind(0), mkRenderBind(1)];
 
     this.updateCameraUniform();
+    // 默认金色，设置面板 setVisual 可覆盖。
+    this.renderData[32] = 1.0;
+    this.renderData[33] = 0.95;
+    this.renderData[34] = 0.82;
+    this.renderData[35] = 1;
+    this.renderData[36] = 0.88;
+    this.renderData[37] = 0.68;
+    this.renderData[38] = 0.32;
+    this.renderData[39] = 1;
+    this.renderData[40] = 0.58;
+    this.renderData[41] = 0.42;
+    this.renderData[42] = 0.18;
+    this.renderData[43] = 1;
 
     void device.lost.then(() => {
       this.disposed = true;
@@ -522,6 +597,9 @@ export class WebGPUBackend {
     this.simData[17] = state.breathWave;
     this.simData[20] = this.sim.bodyBase;
     this.simData[21] = this.sim.swirlBase;
+    const musicOn = state.musicActive > 0.5 ? 1 : 0;
+    this.simData[22] = state.musicBass * musicOn;
+    this.simData[23] = state.musicTreble * musicOn;
     this.simData[24] = state.pointerPos[0];
     this.simData[25] = state.pointerPos[1];
     this.simData[26] = state.pointerPos[2];
@@ -546,9 +624,10 @@ export class WebGPUBackend {
     this.simData[54] = state.dualCore;
     this.simData[55] = state.arms;
     this.simData[56] = state.growth;
-    this.simData[60] = state.core2Offset[0];
-    this.simData[57] = state.core2Offset[1];
-    this.simData[58] = state.core2Offset[2];
+    const sizeN = this.sim.bodyBase / 0.85;
+    this.simData[60] = state.core2Offset[0] * sizeN;
+    this.simData[61] = state.core2Offset[1] * sizeN;
+    this.simData[62] = state.core2Offset[2] * sizeN;
     this.simData[48] = state.clickPos[0];
     this.simData[49] = state.clickPos[1];
     this.simData[50] = state.clickPos[2];
@@ -563,8 +642,10 @@ export class WebGPUBackend {
     this.renderData[25] = state.pulseBoost;
     this.renderData[26] = state.energy;
     this.renderData[27] = state.time;
-    this.renderData[28] = state.brightness;
+    this.renderData[28] = state.brightness * this.brightnessScale;
     this.renderData[29] = state.growth;
+    this.renderData[30] = state.musicTreble;
+    // 主题色（setVisual 写入 renderData[32..43]）。
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 
     const read = this.readIdx;
@@ -606,6 +687,32 @@ export class WebGPUBackend {
   setPointSize(size: number): void {
     this.pointSize = size;
     this.renderData[16] = size * this.dpr;
+  }
+
+  /** 设置面板：团大小倍率 + 三层配色 + 亮度倍率。 */
+  private brightnessScale = 1;
+
+  setVisual(
+    bodyScale: number,
+    core: [number, number, number],
+    body: [number, number, number],
+    aura: [number, number, number],
+    brightness = 1,
+  ): void {
+    this.sim.bodyBase = 0.85 * bodyScale;
+    this.brightnessScale = brightness;
+    this.renderData[32] = core[0];
+    this.renderData[33] = core[1];
+    this.renderData[34] = core[2];
+    this.renderData[35] = 1;
+    this.renderData[36] = body[0];
+    this.renderData[37] = body[1];
+    this.renderData[38] = body[2];
+    this.renderData[39] = 1;
+    this.renderData[40] = aura[0];
+    this.renderData[41] = aura[1];
+    this.renderData[42] = aura[2];
+    this.renderData[43] = 1;
   }
 
   resize(width: number, height: number, dpr: number): void {

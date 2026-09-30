@@ -10,16 +10,42 @@
 
 **MVP（Phase 1–9）与生命闭环（Phase 10a）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度；**永久 DNA（Life ID）、成长（行星环/双核）、记忆性格、现实昼夜、离线回归问候与持久化存档**。分阶段验证记录见 [docs/reports/](docs/reports/)。
 
-你的生命体首次运行时诞生（Life ID 永久保存），陪伴与互动让它成长——多互动会解锁行星环与第二核心；凌晨它会困、变暗；几天不开、回来时它会从松散中重新凝聚向你打招呼。存档在浏览器 localStorage（30 秒自动保存）。
+你的生命体首次运行时诞生（Life ID 永久保存），可见陪伴、附近温和互动与有效音乐共同推动成长——成熟会解锁行星环与第二核心；凌晨它会困、变暗；几天不开、回来时它会从松散中重新凝聚向你打招呼。存档在浏览器 localStorage（30 秒自动保存）。
 
 ```bash
 npm install
 npm run dev        # Web 开发服务器（http://localhost:5173）
 npm run build      # 类型检查 + 生产构建
 npm run preview    # 预览构建产物
-npm run app:build  # Tauri 桌面应用（debug，构建后运行 src-tauri/target/debug/emerge）
-npm run app:dev    # Tauri 开发模式
+npm run app:dev    # 实时调试桌面端（推荐日常使用）
+npm run app:build  # 编译 debug 可执行文件（不打包）
+npm exec tauri build -- --debug --bundles app # 打出可双击的 Emerge.app
 ```
+
+## 实时调试（不必每次重新打包）
+
+日常改代码用 **`npm run app:dev`**：
+
+1. 自动起 Vite（`localhost:5173`），窗口加载的是开发服务器
+2. 改 `src/**` 的 Vue / TS → **HMR 热更新**，窗口秒级刷新，不用重启
+3. 改 `src-tauri/**` 的 Rust / Swift → Tauri **自动重编译并重启**窗口（比 `tauri build` 快很多）
+4. Ctrl+C 停止
+
+| 你改了什么 | 要不要 `app:dev` 重启 | 要不要打 `.app` |
+| --- | --- | --- |
+| Vue / TS / 样式 / shader 字符串 | 否，HMR 即可 | 否 |
+| 仅看形态、情绪、成长 | 可只开 `npm run dev` 在浏览器测 | 否 |
+| Rust / Swift / 依赖 / `Info.plist` | 自动重编，无需手动打包 | 否 |
+| 托盘 | `app:dev` 可测试 | 否 |
+| 系统音频、TCC 权限 | 裸开发程序可能不弹授权提示 | 使用 debug `.app` 验证 |
+| 双击分发、给别人用 | — | `npm exec tauri build -- --debug --bundles app` |
+
+注意：
+
+- `app:dev` 跑的是裸程序 `src-tauri/target/debug/emerge`。本机观察到点击监听后无授权弹窗、权限列表无 Emerge；不能保证重启或重新开关权限即可解决。嵌入 Info.plist 不等于签名已绑定应用身份。
+- 浏览器 `npm run dev` **没有**托盘 / 系统音频 / 穿透，只适合验视觉与 core 逻辑。
+- 系统音频验证：先 Ctrl+C 停止开发实例，执行 `npm exec tauri build -- --debug --bundles app`，再 `open src-tauri/target/debug/bundle/macos/Emerge.app`。点击「监听系统声音」后按系统提示授权；若没有登记，可在系统设置的「屏幕与系统音频录制」列表用 `+` 手动添加此 `.app`，开启后退出并重新打开。授权须用户自行完成。
+- debug `.app` 使用构建后的前端，不提供 Vite 热更新。它仍是 ad-hoc 签名，不能承诺重编译后权限永久有效。
 
 Web 端可用 `?backend=webgpu|webgl2` 强制指定模拟后端；左下诊断条显示后端、状态（平静/好奇/警觉/受惊）、FPS、粒子数、质量档位与目标帧率。
 
@@ -49,30 +75,35 @@ npm run dev
 
 ## 桌面端使用
 
-macOS 菜单栏有 **Emerge 托盘图标**（发光小圆点）：
+macOS **托盘图标左键**弹出菜单：
 
-- **显示 / 隐藏**：让生命体出现或消失
-- **置顶**：开关总在最前
-- **鼠标穿透**：开启后鼠标点击会穿过它直达桌面（再从托盘关闭恢复）——真正"住在桌面上"的模式
-- **退出 Emerge**
+- 生命信息 / 系统声音状态
+- **显示 / 隐藏**
+- **监听系统声音** / **选择音乐文件…** / **停止音乐** / 打开系统声音权限设置…
+- **设置**：外观（团大小、亮度、点大小、配色）、行为（置顶、鼠标穿透）、桌面位置、成长与积累说明
+- **退出**
 
-窗口位置和大小跨启动自动记忆。系统音频响应（放任何 App 的歌它都能听到）为桌面版后续能力。
+窗口铺满主屏、无边框透明。**按住并拖动**可把生命体放到任意位置。默认鼠标穿透，避免挡住桌面。
 
 ## 音乐响应
 
-右上角 ♪ 按钮选择一个音乐文件（页面内播放）——生命体会"听"它：
+托盘「选择音乐文件…」或「监听系统声音」——生命体会"听"：
 
 - **Bass** → 身体随低音脉冲
 - **Beat** → 核心打出能量波（旋涡骤然活跃）
 - **Treble** → 外围粒子变得活跃
 - 高能音乐 → 兴奋；安静 → 平静
 
-它是在听音乐，不是音乐可视化器——音频只影响行为参数。系统音频捕获（放任何 App 的歌它都能听到）属桌面版后续能力。
+音频只影响行为参数。macOS 13+ 通过 ScreenCaptureKit 获取系统音频频段能量；需在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」允许 Emerge。无屏幕帧、无录音文件、无上传。
+
+Windows 系统音频尚未实现，Web 和 Windows 可继续使用音乐文件。
+
+Web 与桌面 localStorage 相互独立，可能有不同 Life ID、年龄和成长阶段；修复统一了渲染参数，但不会覆盖已有生命存档，因此两端不保证外观逐帧相同。
 
 ## 平台
 
 - **Web**：完整体验（Chrome/Edge 推荐，WebGPU 优先，WebGL2 后备）。
-- **macOS / Windows**：Tauri 2 桌面窗口。macOS 已验证运行与交互；透明合成受 WKWebView 层限制（黑底，诊断见 [docs/reports/phase-8.md](docs/reports/phase-8.md)）；Windows 待验证。
+- **macOS / Windows**：Tauri 2 桌面窗口。macOS 已修复页面黑底、画布输入遮挡与拖动权限，最新验证边界见 [桌面修复记录](docs/reports/desktop-fixes.md)；Windows 待验证。
 
 ## MVP 验收
 
@@ -89,3 +120,12 @@ macOS 菜单栏有 **Emerge 托盘图标**（发光小圆点）：
 - [初始技术决策](docs/decisions/0001-technical-direction.md)
 - [原始需求](docs/ORIGINAL_BRIEF.md)
 - [协作约定](AGENTS.md) · [变更记录](CHANGELOG.md)
+
+
+## 三条成长路径
+
+- 可见陪伴：显示时累计，隐藏、关闭与休眠不补发积分；仅靠陪伴也能成熟。
+- 温和互动：只统计粒子附近的真实低速动作和轻点后的短暂回应。鼠标静止或远处移动不算互动；每日前 20 分钟贡献较高。
+- 音乐陪伴：连续有声两秒后开始按时长计分，静音不算；每日前 30 分钟贡献较高，之后递减。系统声音和文件音乐都适用，持续语音等声音也会计入，音量大小不增加积分倍率。
+
+设置中的「成长」可查看成长度、陪伴、互动和有效音乐时长。DNA 影响速度但不限制最终上限。旧存档自动迁移并保留生命身份和旧成长下限。详细规则与验证边界见 [三路径成长决策](docs/decisions/0003-growth-paths.md)。

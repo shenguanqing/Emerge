@@ -56,23 +56,46 @@ export class PointerSystem {
 
   private readonly onMove = (event: PointerEvent) => {
     // 合成事件（自动化拖拽）可能不触发 pointerenter，move 本身即在场证明。
-    this.inCanvas = true;
+    this.ingest(event.clientX, event.clientY, true);
+  };
+
+  /**
+   * 注入指针位置（DOM 事件或穿透模式下的全局跟踪）。
+   * `near` 为 false 表示鼠标远离窗口，生命体可忽略。
+   */
+  ingest(x: number, y: number, near: boolean): void {
+    this.inCanvas = near;
     const now = performance.now();
     const dt = this.lastTime > 0 ? Math.max((now - this.lastTime) / 1000, 1 / 240) : 1 / 60;
     const prevX = this.lastX;
     const prevY = this.lastY;
-    this.position.x = event.clientX;
-    this.position.y = event.clientY;
+    this.position.x = x;
+    this.position.y = y;
     // 指数平滑速度，抑制抖动尖峰；单位 CSS 像素/秒。
     const k = 0.35;
-    this.velocity.x += ((event.clientX - prevX) / dt - this.velocity.x) * k;
-    this.velocity.y += ((event.clientY - prevY) / dt - this.velocity.y) * k;
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
+    this.velocity.x += ((x - prevX) / dt - this.velocity.x) * k;
+    this.velocity.y += ((y - prevY) / dt - this.velocity.y) * k;
+    this.lastX = x;
+    this.lastY = y;
     this.lastTime = now;
     this.lastActivity = now;
     this.sinceMove = 0;
-  };
+  }
+
+  /** 注入左键按下（与 DOM pointerdown 同一语义）。 */
+  press(x: number, y: number, near = true): void {
+    this.ingest(x, y, near);
+    this.velocity.x = 0;
+    this.velocity.y = 0;
+    this.pressing = true;
+    this.pendingClick = { x, y };
+    this.lastActivity = performance.now();
+  }
+
+  /** 注入左键抬起。 */
+  release(): void {
+    this.pressing = false;
+  }
 
   /**
    * 每帧调用：指针停止移动时速度自然衰减到 0。
@@ -95,21 +118,11 @@ export class PointerSystem {
   };
 
   private readonly onDown = (event: PointerEvent) => {
-    // 按下即同步位置（首次点击/落点跳变时不携带历史速度）。
-    this.inCanvas = true;
-    this.position.x = event.clientX;
-    this.position.y = event.clientY;
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
-    this.velocity.x = 0;
-    this.velocity.y = 0;
-    this.pressing = true;
-    this.lastActivity = performance.now();
-    this.pendingClick = { x: event.clientX, y: event.clientY };
+    this.press(event.clientX, event.clientY, true);
   };
 
   private readonly onUp = () => {
-    this.pressing = false;
+    this.release();
   };
 
   /** 是否正在按住（长按吸引场）。 */

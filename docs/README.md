@@ -7,9 +7,22 @@
 | [PRODUCT.md](PRODUCT.md) | 产品原则、平台与 MVP / 后续范围 |
 | [VISUAL_INTERACTION.md](VISUAL_INTERACTION.md) | 三层视觉、生命参数和首版交互脚本 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 模块边界、GPU 后端、桌面适配、数据与性能 |
-| [ROADMAP.md](ROADMAP.md) | Phase 1–10 的交付和完成条件 |
+| [ROADMAP.md](ROADMAP.md) | Phase 1–10 的交付、完成条件与未验证项 |
 | [VALIDATION.md](VALIDATION.md) | 功能、视觉、兼容与性能验收 |
 | [PHASE_REPORT_TEMPLATE.md](PHASE_REPORT_TEMPLATE.md) | 每阶段运行、实测环境与交付结果记录模板 |
+
+## 决策
+
+| 文档 | 内容 |
+| --- | --- |
+| [decisions/0001-technical-direction.md](decisions/0001-technical-direction.md) | 初始技术选择及待验证风险 |
+| [decisions/0002-desktop-audio.md](decisions/0002-desktop-audio.md) | macOS 系统音频捕获与 TCC 权限链路 |
+| [decisions/0003-growth-paths.md](decisions/0003-growth-paths.md) | 三路径成长计分与固定桌面体积 |
+
+## 阶段交付记录
+
+| 文档 | 内容 |
+| --- | --- |
 | [reports/phase-1.md](reports/phase-1.md) | Phase 1 交付记录（架构与渲染 Prototype） |
 | [reports/phase-2.md](reports/phase-2.md) | Phase 2 交付记录（GPU 粒子模拟双后端） |
 | [reports/phase-3.md](reports/phase-3.md) | Phase 3 交付记录（基础形态与启动凝聚） |
@@ -21,7 +34,17 @@
 | [reports/phase-9.md](reports/phase-9.md) | Phase 9 交付记录（自适应质量与低功耗） |
 | [reports/phase-10a.md](reports/phase-10a.md) | Phase 10a 交付记录（DNA/成长/记忆/时间/离线） |
 | [reports/phase-10b-music.md](reports/phase-10b-music.md) | Phase 10b-1 交付记录（音乐响应） |
-| [decisions/0001-technical-direction.md](decisions/0001-technical-direction.md) | 初始技术选择及待验证风险 |
+
+## 检查与验收记录
+
+| 文档 | 内容 |
+| --- | --- |
+| [reports/desktop-fixes.md](reports/desktop-fixes.md) | 桌面黑底/输入/权限/系统音频问题修复验证 |
+| [reports/existing-features-review.md](reports/existing-features-review.md) | 声音、托盘、外观恢复、设置窗与成长路径复验 |
+| [reports/mvp-acceptance.md](reports/mvp-acceptance.md) | MVP 五分钟体验自动化 soak 与人工验收边界 |
+
+| 存档 | 内容 |
+| --- | --- |
 | [ORIGINAL_BRIEF.md](ORIGINAL_BRIEF.md) | 用户原始需求存档 |
 
-当前只有规划文档，所有开发阶段均未开始。文档中的数值为目标或初始调参范围，不是已测结果。实现细节如需调整，保留产品原则并记录决策原因；范围冲突应明确说明，不能静默删减需求。
+实现细节如需调整，保留产品原则并记录决策原因；范围冲突应明确说明，不能静默删减需求。文档中的数值若无对应报告标注实测，按目标或初始调参理解。当前未验证项见 [ROADMAP.md](ROADMAP.md)「未验证项」。

@@ -9,6 +9,9 @@ export interface GrowthInputs {
   days: number;
   /** 累计互动分钟。 */
   interactionMinutes: number;
+  companionMinutes?: number;
+  musicMinutes?: number;
+  growthFloor?: number;
   /** DNA 成长倾向 0..1。 */
   growthBias: number;
   /** DNA 尾迹倾向 0..1（决定旋臂数量上限）。 */
@@ -26,7 +29,7 @@ export interface GrowthState {
   arms: number;
   /** 阶段标签（可视化参考）：初生 / 成形 / 环生 / 双核。 */
   stage: 'nascent' | 'formed' | 'ringed' | 'dual';
-  /** 活跃粒子乘数 0.85..1.25（随成长增多）。 */
+  /** 活跃粒子乘数 0.7..1.8（随成长增多，填充变大的身体体积）。 */
   particleMul: number;
 }
 
@@ -48,16 +51,18 @@ export class GrowthEngine {
   }
 
   private compute(inputs: GrowthInputs): GrowthState {
-    // 互动 4 小时贡献 60%，陪伴 14 天贡献 40%；growthBias 调整体感速度。
-    const interact = clamp01(inputs.interactionMinutes / 240) * 0.6;
-    const days = clamp01((inputs.days - 1) / 14) * 0.4;
-    const speed = 0.7 + 0.6 * inputs.growthBias;
-    const growth = clamp01((interact + days) * speed);
+    // 三条路径共同积累；陪伴项不封顶，最慢 DNA 也能仅靠陪伴成熟。
+    const companion = Math.max(0, inputs.companionMinutes ?? 0) / 2400;
+    const interact = Math.max(0, inputs.interactionMinutes) / 240 * 0.5;
+    const music = Math.max(0, inputs.musicMinutes ?? 0) / 300 * 0.35;
+    const days = clamp01((inputs.days - 1) / 20) * 0.15;
+    const speed = 0.7 + 0.6 * clamp01(inputs.growthBias);
+    const growth = clamp01(Math.max(inputs.growthFloor ?? 0, (companion + interact + music + days) * speed));
 
     const ring = clamp01((growth - 0.55) / 0.35);
     const dualCore = growth >= 0.85;
     // 旋臂：成长过半后逐渐长出，数量受 DNA 尾迹倾向影响（1..5）。
-    const arms = Math.round(clamp01((growth - 0.4) / 0.45) * (1 + inputs.tailProbability * 4)) + 1;
+    const arms = Math.round(clamp01((growth - 0.4) / 0.45) * (1 + inputs.tailProbability * 3)) + 1;
     const stage =
       growth < 0.3 ? 'nascent' : growth < 0.55 ? 'formed' : growth < 0.85 ? 'ringed' : 'dual';
 
@@ -67,7 +72,8 @@ export class GrowthEngine {
       dualCore,
       arms,
       stage,
-      particleMul: 0.85 + 0.4 * growth,
+      // 成长后体积（环/双核/旋臂）变大，粒子要跟上否则发稀。
+      particleMul: 0.7 + 1.1 * growth,
     };
   }
 }

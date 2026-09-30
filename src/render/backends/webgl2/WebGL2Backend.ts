@@ -53,16 +53,8 @@ uniform float uPressStrength;
 uniform vec3 uClickPos;
 uniform float uClickPulse;
 uniform float uPointerPushMul;
-uniform float uEnergy;
-uniform float uPulseBoost;
-uniform float uSymmetry;
-uniform float uRing;
-uniform float uDual;
-uniform float uArms;
-uniform float uGrowth;
-uniform vec3 uCore2Offset;
-uniform float uPress;
-uniform float uPressStrength;
+uniform float uMusicBass;
+uniform float uMusicTreble;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -171,8 +163,9 @@ void main() {
   // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
   // 受惊收缩：核心轻微收紧，身体明显收拢（由 BehaviorEngine 平滑驱动）。
   float contractMul = layer < 0.5 ? (1.0 - 0.12 * uContract) : (1.0 - 0.22 * uContract);
+  float sizeN = uBodyBase / 0.85;
   float bodyR = bodyRadius(dir) * uBodyBase * uBreath * contractMul;
-  float radMul = layer < 0.5 ? mix(0.16, 0.34, h)
+  float radMul = layer < 0.5 ? mix(0.24, 0.46, h)
                : layer < 1.5 ? mix(0.88, 1.04, h)
                : mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - uBreathWave));
   vec3 anchor = dir * bodyR * radMul;
@@ -197,15 +190,16 @@ void main() {
     float armIdx = floor(mod(seed * 97.0, uArms));
     float baseAngle = armIdx * 6.2831853 / uArms + uTime * 0.05;
     float angle = baseAngle + armAlong * 0.9 + seed * 0.3;
-    float armRadius = bodyR * (1.0 + armAlong * (0.8 + uGrowth * 1.8));
+    float armRadius = uBodyBase * (0.8 + armAlong * 0.75);
     float yArm = (hash1(seed * 13.7) - 0.5) * armAlong * bodyR * 0.8;
-    anchor = uCore + vec3(cos(angle) * armRadius, yArm, sin(angle) * armRadius);
+    anchor = vec3(cos(angle) * armRadius, yArm, sin(angle) * armRadius);
   }
-  // 成长：卫星粒子（远轨明亮大粒子，环绕母体）。
+  // 成长：卫星粒子（远轨明亮大粒子，环绕母体）；轨道随团大小缩放。
   if (uGrowth > 0.7 && seed >= 0.995) {
     float ph = hash1(seed * 57.1) * 6.2831853;
-    float orbR = 3.0 + hash1(seed * 77.7) * 1.4;
-    anchor = uCore + vec3(
+
+    float orbR = (1.2 + hash1(seed * 77.7) * 0.25) * sizeN;
+    anchor = vec3(
       cos(uTime * 0.18 + ph) * orbR,
       sin(uTime * 0.11 + ph * 2.0) * orbR * 0.3,
       sin(uTime * 0.18 + ph) * orbR * 0.55);
@@ -214,52 +208,77 @@ void main() {
   float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
   // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
   float softMul = layer < 0.5 ? mix(1.0, 0.6, uScatter) : mix(1.0, 0.15, uScatter);
+  // 音乐时外壳略软，便于涨落；静音不改形态。
+  float musicPush = max(0.0, uMusicBass - 0.03) + max(0.0, uPulseBoost - 0.05) * 0.5;
+  softMul *= (1.0 - 0.28 * musicPush);
   vec3 target = uCore + anchor;
   vec3 force = (target - p) * (uShellK * stiffMul * softMul);
 
   // 核心长程吸引。
   vec3 toCore = uCore - p;
-  float dist = length(toCore) + 0.25;
-  force += (toCore / dist) * (uCoreG / dist);
+  float dist = length(toCore) + 0.25 * sizeN;
+  force += (toCore / dist) * (uCoreG * sizeN * sizeN / dist);
 
   // 旋涡：凝聚期与受惊重组期共用——粒子绕核回旋后自然归位。
   float swirl = max(1.0 - uFormMix, uScatter * 0.85) * uSwirlBase;
   vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), toCore) + vec3(1e-5, 0.0, 0.0));
-  force += tangent * swirl * smoothstep(5.0, 0.5, dist);
+  force += tangent * swirl * sizeN * smoothstep(5.0, 0.5, dist);
+
+  // ---- 音乐动作：低频体积推、节拍炸开、高频搅动；幅度随团大小缩放 ----
+  vec3 fromCore = -toCore;
+  float dCore = length(fromCore) + 1e-4;
+  vec3 outward = fromCore / dCore;
+
+  // 低频：整团向外顶，像被鼓点吹开。
+  force += outward * (uMusicBass * 7.5 * sizeN) * (0.35 + 0.65 * (layer / 2.0));
+  // 节拍：一次性外推冲击（配合 pulseBoost 视觉闪光）。
+  force += outward * (uPulseBoost * 9.0 * sizeN) * (0.5 + 0.5 * (layer / 2.0));
+  // 高频：外围搅动，流场加速。
+  vec3 flowPos2 = p * (uCurlFreq * 1.6) + vec3(uTime * 0.2, uTime * 0.13, uTime * (uCurlSpeed + uMusicTreble * 0.35));
+  float trebleMul = layer > 1.5 ? 1.8 : (layer > 0.5 ? 0.8 : 0.25);
+  force += curlNoise(flowPos2) * (uMusicTreble * 3.2 * trebleMul * sizeN);
+  // 高能：旋涡加快一点，整团转起来。
+  force += tangent * (uEnergy * 1.6 * sizeN) * smoothstep(4.5, 0.4, dist);
 
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
   vec3 flowPos = p * uCurlFreq + vec3(0.0, 0.0, uTime * uCurlSpeed);
   float curlMul = layer < 0.5 ? 0.3 : (layer < 1.5 ? 1.0 : 1.5);
-  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * curlMul);
+  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * curlMul * sizeN);
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   // 指针读数已经过感知延迟，此处只做纯力响应。
   if (uPointerActive > 0.01) {
     vec3 toP = uPointerPos - p;
     float dP = length(toP) + 1e-4;
-    float influence = smoothstep(uPointerRadius, 0.0, dP);
+    float influence = smoothstep(uPointerRadius * sizeN, 0.0, dP);
     vec3 away = -toP / dP;
     float speed = length(uPointerVel);
     float impact = smoothstep(uImpactSpeed, uImpactSpeed * 2.5, speed) * influence;
     // 警觉期：影响半径与排斥略增；长按时排斥淡出（把玩优先）。
     float waryMul = 1.0 + uWary * 0.6;
     float pushMul = influence * uPointerPush * uPointerPushMul * waryMul * (1.0 - uPress);
-    force += away * (pushMul + impact * uImpactPush * 3.0);
-    force += uPointerVel * impact * 0.9;
+    force += away * (pushMul + impact * uImpactPush * 3.0) * sizeN;
+    force += uPointerVel * impact * 0.9 * sizeN;
   }
 
   // 长按吸引场：粒子围向按压点（交互把玩）。
   if (uPress > 0.01) {
     vec3 toPress = uPointerPos - p;
     float dPress = length(toPress) + 1e-4;
-    float pin = smoothstep(uPointerRadius + 0.6, 0.0, dPress);
-    force += (toPress / dPress) * (uPress * uPressStrength * pin);
+    float pin = smoothstep((uPointerRadius + 0.6) * sizeN, 0.0, dPress);
+    force += (toPress / dPress) * (uPress * uPressStrength * pin * sizeN);
   }
 
   // 点击涟漪：从点击点向外的单次冲击波。
   vec3 dc = p - uClickPos;
   float dcl = length(dc) + 1e-4;
-  force += (dc / dcl) * (smoothstep(2.4, 0.0, dcl) * uClickPulse * 26.0);
+  force += (dc / dcl) * (smoothstep(2.4 * sizeN, 0.0, dcl) * uClickPulse * 26.0 * sizeN);
+
+  // 与 WebGPU 相同的外围回收场，使用力收拢而非瞬移截断。
+  float envelope = max(uBodyBase * 2.6 * uBreath, length(anchor) + uBodyBase * 0.6);
+  float excess = max(0.0, dCore - envelope);
+  force -= outward * excess * uShellK * 4.0;
+  force -= v * smoothstep(0.0, max(uBodyBase, 0.01), excess) * 6.0;
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
   vec3 nv = (v + force * uDt) * exp(-uDamping * uDt);
@@ -297,6 +316,9 @@ varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
 varying float vSat;
+varying float vSpark;
+
+float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
 void main() {
   float ref = aRef + 0.5;
@@ -317,10 +339,16 @@ void main() {
   reveal = reveal * reveal * (3.0 - 2.0 * reveal);
 
   float sizeMul = (layer < 0.5 ? 1.5 : (layer < 1.5 ? 1.0 : 0.9)) * mix(1.35, 1.0, uFormMix);
+  // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同，与 WebGPU 后端一致）。
+  float tw = sin(uTime * (2.5 + seed * 3.5) + seed * 40.0);
+  sizeMul *= (1.0 + uPulseBoost * 0.15 + uEnergy * 0.12 * tw);
   gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul;
   vGlow = depthFade;
   vLayer = layer;
-  vAlpha = reveal * mix(0.7, 1.0, uFormMix);
+  vAlpha = reveal * mix(0.7, 1.0, uFormMix) * (1.0 + uEnergy * 0.2 * tw);
+  // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGPU 后端一致）。
+  vSpark = (0.70 + 0.60 * hash1(seed * 91.7 + 2.1))
+         * (1.0 + uPulseBoost * 0.18 + uEnergy * 0.14 * tw);
 }
 `;
 
@@ -329,26 +357,34 @@ precision mediump float;
 uniform float uBreathWave;
 uniform float uMoodShift;
 uniform float uBrightness;
+uniform vec3 uCoreCol;
+uniform vec3 uBodyCol;
+uniform vec3 uAuraCol;
+uniform float uTreble;
 varying float vSat;
 varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
+varying float vSpark;
 
 void main() {
   vec2 uv = gl_PointCoord - 0.5;
-  float d = length(uv);
-  float a = smoothstep(0.5, 0.12, d);
-  a = 0.30 + 0.70 * a * a;
+  float d = length(uv) * 2.0;             // 0 中心 → 1 精灵边缘
+  // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
+  float s = smoothstep(1.0, 0.32, d);
+  float a = 0.20 + 0.80 * s * s;
+  float hot = smoothstep(0.50, 0.05, d);  // 白热火花芯
 
-  // 分层配色：核心亮冰白随呼吸脉动、身体冷蓝、外围深蓝；克制不堆砌。
-  vec3 coreCol = mix(vec3(0.90, 0.95, 1.0), vec3(1.0, 0.96, 0.9), uMoodShift * 0.35)
-               * (1.6 + 1.0 * uBreathWave);
-  vec3 bodyCol = mix(vec3(0.42, 0.62, 0.95), vec3(0.50, 0.78, 1.0), uMoodShift * 0.6) * 1.35;
-  vec3 auraCol = vec3(0.24, 0.40, 0.75) * 0.8;
+  // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
+  vec3 coreCol = mix(uCoreCol, uCoreCol * vec3(1.0, 0.97, 0.92), uMoodShift * 0.35)
+               * (1.20 + 0.60 * uBreathWave);
+  vec3 bodyCol = mix(uBodyCol, uBodyCol * vec3(1.0, 1.12, 1.18), uMoodShift * 0.25) * 1.38;
+  vec3 auraCol = uAuraCol * (0.9 + uTreble * 0.85);
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
-  float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55);
-  col *= (0.85 + 0.15 * vGlow) * uBrightness;
-  col = mix(col, vec3(1.0), vSat * 0.6); // 卫星粒子亮白
+  float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55 + uTreble * 0.25);
+  col = mix(col, vec3(1.0, 0.94, 0.78), hot * 0.50); // 火花芯烧白
+  col *= (0.85 + 0.15 * vGlow) * uBrightness * vSpark;
+  col = mix(col, vec3(1.0, 0.96, 0.82), vSat * 0.55); // 卫星粒子亮金白
   gl_FragColor = vec4(col * a, a * vAlpha * layerAlpha);
 }
 `;
@@ -369,8 +405,6 @@ export class WebGL2Backend {
   private readonly geometry: THREE.BufferGeometry;
   private readonly material: THREE.ShaderMaterial;
   private readonly points: THREE.Points;
-  private overlay: HTMLCanvasElement | null = null;
-  private overlayCtx: CanvasRenderingContext2D | null = null;
   private disposed = false;
 
   constructor(
@@ -379,28 +413,11 @@ export class WebGL2Backend {
     private readonly sim: SimulationParams,
     transparent = false,
   ) {
-    // 桌面透明模式：WKWebView 的 WebGL 层不参与页面透明合成（黑底），
-    // 需经 2D 画布中转：GL 画布保留绘图缓冲，逐帧 drawImage 到透明 2D 画布。
     this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: false,
-      alpha: transparent,
-      preserveDrawingBuffer: transparent,
+      canvas, antialias: false, alpha: transparent,
       powerPreference: 'high-performance',
     });
     this.renderer.setClearColor(0x000000, transparent ? 0 : 1);
-    if (transparent) {
-      canvas.style.display = 'none';
-      const overlay = document.createElement('canvas');
-      overlay.style.position = 'absolute';
-      overlay.style.inset = '0';
-      overlay.style.width = '100%';
-      overlay.style.height = '100%';
-      overlay.style.display = 'block';
-      canvas.parentElement?.appendChild(overlay);
-      this.overlay = overlay;
-      this.overlayCtx = overlay.getContext('2d');
-    }
     this.camera.position.set(0, 0, 7);
     this.particleCount = params.particleCount;
     this.simH = Math.ceil(MAX_PARTICLES / SIM_W);
@@ -463,6 +480,8 @@ export class WebGL2Backend {
       uClickPos: { value: new THREE.Vector3() },
       uClickPulse: { value: 0 },
       uPointerPushMul: { value: 1 },
+      uMusicBass: { value: 0 },
+      uMusicTreble: { value: 0 },
     };
     Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
     Object.assign(this.velVar.material.uniforms, shared);
@@ -500,6 +519,10 @@ export class WebGL2Backend {
         uTime: { value: 0 },
         uEnergy: { value: params.energyBase },
         uPulseBoost: { value: 0 },
+        uCoreCol: { value: new THREE.Vector3(1.0, 0.95, 0.82) },
+        uBodyCol: { value: new THREE.Vector3(0.88, 0.68, 0.32) },
+        uAuraCol: { value: new THREE.Vector3(0.58, 0.42, 0.18) },
+        uTreble: { value: 0 },
       },
       vertexShader: POINTS_VERT,
       fragmentShader: POINTS_FRAG,
@@ -521,6 +544,26 @@ export class WebGL2Backend {
   /** 质量档位：粒子基础尺寸。 */
   setPointSize(size: number): void {
     this.material.uniforms.uPointSize.value = size;
+  }
+
+  /** 设置面板：团大小倍率 + 三层配色 + 亮度倍率。 */
+  private brightnessScale = 1;
+
+  setVisual(
+    bodyScale: number,
+    core: [number, number, number],
+    body: [number, number, number],
+    aura: [number, number, number],
+    brightness = 1,
+  ): void {
+    this.sim.bodyBase = 0.85 * bodyScale;
+    this.brightnessScale = brightness;
+    const shared = this.velVar.material.uniforms as Record<string, { value: number | THREE.Vector3 }>;
+    shared.uBodyBase.value = this.sim.bodyBase;
+    const paint = this.material.uniforms as Record<string, { value: THREE.Vector3 }>;
+    paint.uCoreCol.value.set(core[0], core[1], core[2]);
+    paint.uBodyCol.value.set(body[0], body[1], body[2]);
+    paint.uAuraCol.value.set(aura[0], aura[1], aura[2]);
   }
 
   /** 每帧执行一次 GPU 模拟步进并渲染。 */
@@ -556,6 +599,8 @@ export class WebGL2Backend {
     u.uContract.value = state.contract;
     u.uEnergy.value = state.energy;
     u.uPulseBoost.value = state.pulseBoost;
+    u.uMusicBass.value = state.musicBass * (state.musicActive > 0.5 ? 1 : 0);
+    u.uMusicTreble.value = state.musicTreble * (state.musicActive > 0.5 ? 1 : 0);
     u.uSymmetry.value = state.symmetry;
     u.uRing.value = state.ring;
     u.uDual.value = state.dualCore;
@@ -563,8 +608,13 @@ export class WebGL2Backend {
     u.uGrowth.value = state.growth;
     u.uArms.value = state.arms;
     u.uGrowth.value = state.growth;
+    // 双核间距随团大小缩放，避免调小后仍被拉得很开。
+    const sizeN = this.sim.bodyBase / 0.85;
     (u.uCore2Offset.value as THREE.Vector3).set(
-      state.core2Offset[0], state.core2Offset[1], state.core2Offset[2]);
+      state.core2Offset[0] * sizeN,
+      state.core2Offset[1] * sizeN,
+      state.core2Offset[2] * sizeN,
+    );
     u.uPress.value = state.pressRamp;
     u.uPointerPushMul.value = state.pointerPushMul;
     (u.uClickPos.value as THREE.Vector3).set(
@@ -579,18 +629,14 @@ export class WebGL2Backend {
     m.uTime.value = state.time;
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
-    m.uBrightness.value = state.brightness;
+    m.uBrightness.value = state.brightness * this.brightnessScale;
+    m.uTreble.value = state.musicTreble;
     m.uGrowth.value = state.growth;
     m.uMoodShift.value = state.moodShift;
 
     this.gpu.compute();
     m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
     this.renderer.render(this.scene, this.camera);
-    if (this.overlayCtx && this.overlay) {
-      // GL 画布 → 2D 画布：保留 alpha 的页面合成路径（WebKit 限制的规避）。
-      this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-      this.overlayCtx.drawImage(this.renderer.domElement, 0, 0, this.overlay.width, this.overlay.height);
-    }
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -599,18 +645,11 @@ export class WebGL2Backend {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.material.uniforms.uPixelRatio.value = dpr;
-    if (this.overlay) {
-      this.overlay.width = Math.max(1, Math.floor(width * dpr));
-      this.overlay.height = Math.max(1, Math.floor(height * dpr));
-    }
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.overlay?.remove();
-    this.overlay = null;
-    this.overlayCtx = null;
     this.renderer.domElement.style.visibility = '';
     this.scene.remove(this.points);
     this.geometry.dispose();

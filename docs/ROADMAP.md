@@ -1,6 +1,6 @@
 # 开发路线
 
-当前进度：**MVP（Phase 1–9）已交付**。Phase 1–7 与 9 完成并通过验证；Phase 8 部分通过（macOS 桌面窗口可运行，透明合成受 WKWebView 层限制，见 [reports/phase-8.md](reports/phase-8.md)）。Phase 10 为后续系统，按原始需求在 MVP 验收后再启动。
+当前进度：**MVP（Phase 1–9）与生命闭环（Phase 10a）、音乐响应（Phase 10b-1）已交付**。Phase 1–7 与 9 完成并通过验证；Phase 8 部分通过（macOS 桌面窗口、托盘、穿透、设置窗可运行；透明合成受 WKWebView 层限制，见 [reports/phase-8.md](reports/phase-8.md)）。Phase 10b-1 的桌面真实系统音频待授权后验收。Phase 10b-2 为后续批次。
 
 | 阶段 | 交付范围 | 完成条件 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 | Phase 8 透明桌面窗口（⚠️ 部分通过） | Tauri 2，macOS / Windows 透明无边框，系统托盘（显示/隐藏/置顶/穿透/退出），窗口位置记忆 | macOS：托盘/置顶/穿透开关/交互/退出/位置记忆 ✅，透明合成 ⚠️（上游缺陷 [wry#1867](https://github.com/tauri-apps/wry/issues/1867)，诊断与应用侧 workaround 已记录）；Windows：待用户在 Windows 环境验证 |
 | Phase 9 性能优化（✅ 已完成） | 自适应档位、低功耗、隐藏/恢复、资源稳定性 | Ultra 100k @ 120 FPS；四档滞回升降档；闲置 60→30→15 低功耗调度 |
 | Phase 10a 生命闭环（✅ 已完成） | DNA、成长、记忆、现实时间/离线、持久化（LifeStorage） | 核心测试 9/9；DNA 持久化与刷新一致；成长/双核/环/昼夜/离线问候截图可辨 |
-| Phase 10b-1 音乐响应（✅ 已完成） | 文件输入 → Bass/Mid/Treble/Beat/能量 → 行为参数（身体脉冲/能量波/兴奋） | 合成节拍音端到端验证；Web 系统音频受浏览器安全模型限制（记录） |
+| Phase 10b-1 音乐响应（✅ 已完成，真实系统音频待验收） | 文件输入 → Bass/Mid/Treble/Beat/能量 → 行为参数（身体脉冲/能量波/兴奋） | 合成节拍音端到端验证；Web 系统音频受浏览器安全模型限制（记录）；macOS 系统音频链路已实现，授权后真实响应待验证 |
 | Phase 10b-2 后续批次（未开始） | 桌面系统音频捕获（WASAPI/权限）、完整观察空间 UI、跨设备同步与分享 | 每项独立设计与验证；不得一次性展开全部功能 |
 
 ## MVP 验收标准
@@ -24,7 +24,18 @@
 ## 已知限制与后续跟进
 
 - macOS 桌面透明合成的最后一层受阻于 WKWebView（黑底），完整诊断链与应用侧 workaround 见 [reports/phase-8.md](reports/phase-8.md)；Windows（WebView2）路径预期不受影响，待验证。
-- Phase 8 的鼠标穿透、位置锁定、双模式切换 UI 未实现（Tauri API 存在，逐项验证后推进）。
+- 鼠标穿透、桌面位置锁定、设置窗（外观/行为/成长说明）已在 macOS 交付；原生设置窗叠放与 Cmd+, 入口在 2026-09-30 续验中未复测通过，见 [reports/existing-features-review.md](reports/existing-features-review.md)。
+
+## 未验证项（功能已实现，验收未完成）
+
+| 项目 | 现状 | 需要的验证 |
+| --- | --- | --- |
+| 桌面真实系统音频 | macOS ScreenCaptureKit + TCC 链路已重做（Info.plist + 原生采集） | 用户授权后播放音乐/视频，观察粒子节奏与情绪响应 |
+| 原生设置窗口 | UI 已按 Claude 规范重做，浏览器路径已验证 | Tauri WebView 内 420×720 窗口、滚动、深浅色、Cmd+, 与托盘入口 |
+| 成熟形态视觉 | 行星环/双核/桥接/旋臂/卫星已在 WebGPU 与 WebGL2 对齐实现 | 真实成长度下的观感、火花样式、不同屏幕尺寸 |
+| Windows 全线 | 代码路径在，本环境无 Windows | Phase 8 窗口/穿透/托盘、WASAPI 系统音频 |
+
+以上四项在验收完成前不得在文档中写成「已验证」。
 
 ## 每阶段的交付记录
 

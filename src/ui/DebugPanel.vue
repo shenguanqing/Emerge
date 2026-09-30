@@ -10,13 +10,21 @@ const w = window as typeof window & {
     now(): number;
     advance(ms: number): void;
     scale: number;
+    setScale(s: number): void;
     date(): Date;
   };
-  __emergeMemory?: { state: { interactionMinutes: number; daysSeen: string[] } };
+  __emergeMemory?: { state: { interactionCredit: number; interactionMinutes: number; daysSeen: string[] } };
 };
 
 const vnow = ref('');
 const lastAction = ref('');
+const currentScale = ref(1);
+const scales = [1, 10, 100, 500, 2000];
+
+function applyScale(s: number): void {
+  setScale(s);
+  lastAction.value = `时间倍率 ×${s} ✓`;
+}
 let flashTimer = 0;
 let timer = 0;
 
@@ -32,6 +40,7 @@ onMounted(() => {
     if (d) {
       vnow.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
+    currentScale.value = w.__emergeClock?.scale ?? 1;
   };
   tick();
   timer = window.setInterval(tick, 1000);
@@ -42,10 +51,15 @@ function forwardDays(n: number): void {
   w.__emergeClock?.advance(n * 86400000);
   flash(`+${n} 天 ✓`);
 }
+function setScale(n: number): void {
+  if (w.__emergeClock) w.__emergeClock.scale = n;
+  flash(`时间倍率 ×${n} ✓`);
+}
 function addInteractionMinutes(n: number): void {
   const m = w.__emergeMemory;
   if (m) {
     m.state.interactionMinutes += n;
+    m.state.interactionCredit += n;
     flash(`+${n} 分钟互动 ✓`);
   }
 }
@@ -72,6 +86,20 @@ function resetLife(): void {
     <div class="row">虚拟时间 {{ vnow }}（×{{ w.__emergeClock?.scale ?? 1 }}）</div>
     <div class="row action">{{ lastAction }}</div>
     <div class="btns">
+      <button @click="setScale(1)">×1</button>
+      <button @click="setScale(100)">×100</button>
+      <button @click="setScale(1000)">×1000</button>
+    </div>
+    <div class="row">时间倍率</div>
+    <div class="btns">
+      <button
+        v-for="s in scales"
+        :key="s"
+        :class="{ active: currentScale === s }"
+        @click="applyScale(s)"
+      >×{{ s }}</button>
+    </div>
+    <div class="row btns">
       <button @click="forwardDays(1)">+1 天</button>
       <button @click="addInteractionMinutes(60)">+60 分钟互动</button>
       <button @click="simulateAbsence(3)">模拟离开 3 天</button>
@@ -100,6 +128,10 @@ function resetLife(): void {
 .row.title {
   font-weight: 600;
   margin-bottom: 2px;
+}
+button.active {
+  border-color: rgba(140, 220, 180, 0.7);
+  color: rgba(160, 255, 210, 0.95);
 }
 .btns {
   display: flex;

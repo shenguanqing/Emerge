@@ -28,20 +28,51 @@ export class AudioSystem {
   private objectUrl: string | null = null;
   private lastBeatAt = 0;
   private bassAvg = 0;
+  /** 复用输出对象，避免每帧分配。 */
+  private readonly out: MusicFeatures = {
+    active: false, bass: 0, mid: 0, treble: 0, energy: 0, beat: false,
+  };
+  /** 托盘事件无用户手势时 play() 会被拦，等首次手势后补播。 */
+  private pendingPlay = false;
+  private unlockInstalled = false;
   active = false;
+
+  constructor() {
+    // 首次任意手势解锁 AudioContext / 补播（托盘选文件不在网页手势内）。
+    if (typeof window !== 'undefined' && !this.unlockInstalled) {
+      this.unlockInstalled = true;
+      const unlock = () => {
+        void this.resumeAndPlay();
+      };
+      window.addEventListener('pointerdown', unlock, { capture: true, once: false });
+      window.addEventListener('keydown', unlock, { capture: true, once: false });
+    }
+  }
 
   /** 用户选择音乐文件后接入（须在用户手势中调用）。 */
   async attachFile(file: File): Promise<void> {
+    await this.attachUrl(URL.createObjectURL(file), true);
+  }
+
+  /** 以 URL / asset 路径接入（托盘选文件等场景）。 */
+  async attachUrl(url: string, revokeAfter = false): Promise<void> {
     this.detach();
     if (!this.ctx) {
       this.ctx = new AudioContext();
     }
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    if (this.ctx.state === 'suspended') {
+      try { await this.ctx.resume(); } catch { /* 等手势解锁 */ }
+    }
 
     this.audioEl = new Audio();
-    this.objectUrl = URL.createObjectURL(file);
-    this.audioEl.src = this.objectUrl;
+    this.objectUrl = revokeAfter ? url : null;
+    this.audioEl.src = url;
     this.audioEl.loop = true;
+    this.audioEl.preload = 'auto';
+    this.audioEl.addEventListener('error', () => {
+      const code = this.audioEl?.error?.code;
+      console.warn('[audio] element error', code, url.slice(0, 80));
+    });
 
     const source = this.ctx.createMediaElementSource(this.audioEl);
     this.analyser = this.ctx.createAnalyser();
@@ -50,25 +81,54 @@ export class AudioSystem {
     source.connect(this.analyser);
     this.analyser.connect(this.ctx.destination); // 音乐照常出声
     this.freq = new Uint8Array(this.analyser.frequencyBinCount);
-    await this.audioEl.play();
     this.active = true;
+    this.pendingPlay = true;
+    await this.resumeAndPlay();
+  }
+
+  /** 手势内调用可直接出声；手势外只标记待播。 */
+  private async resumeAndPlay(): Promise<void> {
+    if (!this.audioEl || !this.pendingPlay) return;
+    try {
+      if (this.ctx?.state === 'suspended') await this.ctx.resume();
+      await this.audioEl.play();
+      this.pendingPlay = false;
+    } catch {
+      // 仍被自动播放策略拦下：保留 pendingPlay，下一次手势再试。
+    }
+  }
+
+  /** 暴露给渲染循环的补播入口。 */
+  retryPendingPlay(): void {
+    if (this.pendingPlay) void this.resumeAndPlay();
   }
 
   /** 播放/暂停。 */
   setPlaying(playing: boolean): void {
     if (!this.audioEl) return;
-    if (playing) void this.audioEl.play();
-    else this.audioEl.pause();
+    if (playing) {
+      this.pendingPlay = true;
+      void this.resumeAndPlay();
+    } else {
+      this.audioEl.pause();
+    }
   }
 
   isPlaying(): boolean {
     return this.active && !!this.audioEl && !this.audioEl.paused;
   }
 
-  /** 每帧读取音乐特征。未激活时返回 inactive。 */
+  /** 每帧读取音乐特征。未激活时返回 inactive（复用同一对象）。 */
   read(now: number): MusicFeatures {
-    if (!this.active || !this.analyser || !this.freq) {
-      return { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beat: false };
+    const out = this.out;
+    if (!this.isPlaying() || !this.analyser || !this.freq) {
+      out.active = false;
+      out.bass = 0;
+      out.mid = 0;
+      out.treble = 0;
+      out.energy = 0;
+      out.beat = false;
+      return out;
     }
     this.analyser.getByteFrequencyData(this.freq);
     const binHz = (this.ctx?.sampleRate ?? 48000) / (this.analyser.fftSize * 2) * 2;
@@ -82,7 +142,6 @@ export class AudioSystem {
     const bass = avg(20, 150);
     const mid = avg(150, 2000);
     const treble = avg(2000, 9000);
-    const energy = bass * 0.4 + mid * 0.4 + treble * 0.2;
 
     // 节拍检测：低频能量突增（阈值 + 250ms 冷却）。
     let beat = false;
@@ -92,11 +151,18 @@ export class AudioSystem {
     }
     this.bassAvg += (bass - this.bassAvg) * 0.05;
 
-    return { active: true, bass, mid, treble, energy, beat };
+    out.active = true;
+    out.bass = bass;
+    out.mid = mid;
+    out.treble = treble;
+    out.energy = bass * 0.4 + mid * 0.4 + treble * 0.2;
+    out.beat = beat;
+    return out;
   }
 
   detach(): void {
     this.active = false;
+    this.pendingPlay = false;
     if (this.audioEl) {
       this.audioEl.pause();
       this.audioEl.src = '';
@@ -106,6 +172,9 @@ export class AudioSystem {
       URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = null;
     }
+    this.analyser?.disconnect();
+    this.bassAvg = 0;
+    this.lastBeatAt = 0;
     this.analyser = null;
     this.freq = null;
   }
