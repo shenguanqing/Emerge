@@ -1,8 +1,14 @@
 import type { PointerReading } from '../core/PointerPerception';
+import {
+  cssToWorldOnViewPlane,
+  DEFAULT_CAMERA,
+  FOV_Y,
+  type OrbitCamera,
+} from '../render/ViewState';
 
 /**
  * 指针系统：把鼠标当作物理对象，记录位置与速度，并换算到生命体世界
- * （z=0 平面，与渲染相机 fov 50°、距离 7 一致）。
+ * （与渲染相机 fov 50° 一致；观察空间旋转后按当前视平面反投影）。
  */
 export class PointerSystem {
   readonly position = { x: 0, y: 0 };
@@ -10,11 +16,16 @@ export class PointerSystem {
   private viewportW = 1;
   private viewportH = 1;
   private inCanvas = false;
+  private camera: OrbitCamera = { ...DEFAULT_CAMERA };
 
   /** 最近一次指针活动的时间戳（performance.now）。 */
   lastActivity = 0;
   private pressing = false;
-  private pendingClick: { x: number; y: number } | null = null;
+  private pendingClick: { x: number; y: number; t: number } | null = null;
+  private readyClick: { x: number; y: number; z: number } | null = null;
+  private doubleArmed = false;
+  private doublePos: { x: number; y: number } | null = null;
+  private lastClickDone: { x: number; y: number; t: number } | null = null;
 
   private target: HTMLElement | null = null;
   private lastX = 0;
@@ -22,30 +33,27 @@ export class PointerSystem {
   private lastTime = 0;
   private sinceMove = 0;
 
-  /** 相机常量：与渲染后端保持一致（fov 50°，相机在 z=7）。 */
-  private static readonly FOV_Y = (50 * Math.PI) / 180;
-  private static readonly CAM_DIST = 7;
-
   /** 视口 CSS 尺寸（App resize 时调用）。 */
   setViewport(w: number, h: number): void {
     this.viewportW = Math.max(w, 1);
     this.viewportH = Math.max(h, 1);
   }
 
-  /** CSS 像素 → 生命体世界坐标（z=0 平面）。 */
+  /** 同步观察相机（进出 Observatory / 旋转缩放时）。 */
+  setCamera(cam: OrbitCamera): void {
+    this.camera = cam;
+  }
+
+  /** CSS 像素 → 生命体世界坐标（当前相机视平面）。 */
   private cssToWorld(x: number, y: number): [number, number, number] {
-    const aspect = this.viewportW / this.viewportH;
-    const halfH = Math.tan(PointerSystem.FOV_Y / 2) * PointerSystem.CAM_DIST;
-    const halfW = halfH * aspect;
-    const ndcX = (x / this.viewportW) * 2 - 1;
-    const ndcY = -((y / this.viewportH) * 2 - 1);
-    return [ndcX * halfW, ndcY * halfH, 0];
+    return cssToWorldOnViewPlane(this.camera, x, y, this.viewportW, this.viewportH);
   }
 
   /** 换算到世界坐标的当前读数。 */
   getReading(): PointerReading {
+    const camDist = this.camera.distance;
     const worldPerPx =
-      (2 * Math.tan(PointerSystem.FOV_Y / 2) * PointerSystem.CAM_DIST) / this.viewportH;
+      (2 * Math.tan(FOV_Y / 2) * camDist) / this.viewportH;
     const world = this.cssToWorld(this.position.x, this.position.y);
     return {
       active: this.inCanvas,
@@ -88,13 +96,41 @@ export class PointerSystem {
     this.velocity.x = 0;
     this.velocity.y = 0;
     this.pressing = true;
-    this.pendingClick = { x, y };
-    this.lastActivity = performance.now();
+    const now = performance.now();
+    const nearDouble = (px: number, py: number, t: number) =>
+      now - t < 300 && Math.hypot(x - px, y - py) < 48;
+
+    // 双击：300ms 内、落点接近的两次按下（含第一次已抬起的情形）。
+    if (this.pendingClick && nearDouble(this.pendingClick.x, this.pendingClick.y, this.pendingClick.t)) {
+      this.pendingClick = null;
+      this.readyClick = null;
+      this.doubleArmed = true;
+      this.doublePos = { x, y };
+    } else if (this.lastClickDone && nearDouble(this.lastClickDone.x, this.lastClickDone.y, this.lastClickDone.t)) {
+      this.readyClick = null;
+      this.lastClickDone = null;
+      this.doubleArmed = true;
+      this.doublePos = { x, y };
+    } else {
+      this.pendingClick = { x, y, t: now };
+    }
+    this.lastActivity = now;
   }
 
   /** 注入左键抬起。 */
   release(): void {
     this.pressing = false;
+    // 抬起即放行单击涟漪：反馈要即时，双击由 press 侧拦截。
+    this.flushClick();
+  }
+
+  private flushClick(): void {
+    if (!this.pendingClick) return;
+    const css = this.pendingClick;
+    this.pendingClick = null;
+    this.lastClickDone = { x: css.x, y: css.y, t: performance.now() };
+    const world = this.cssToWorld(css.x, css.y);
+    this.readyClick = { x: world[0], y: world[1], z: world[2] };
   }
 
   /**
@@ -130,13 +166,33 @@ export class PointerSystem {
     return this.pressing;
   }
 
-  /** 取出一次待处理的点击（世界坐标，按下瞬间的位置）；无则返回 null。 */
+  /** 取出已放行的单击涟漪（抬起即放行；丢 up 事件时 400ms 兜底）。 */
   consumeClick(): { x: number; y: number; z: number } | null {
-    if (!this.pendingClick) return null;
-    const css = this.pendingClick;
+    if (this.pendingClick && performance.now() - this.pendingClick.t > 400) {
+      this.flushClick();
+    }
+    const hit = this.readyClick;
+    this.readyClick = null;
+    return hit;
+  }
+
+  /** 消费一次双击（300ms 内、落点接近的两次按下）；返回双击的 CSS 坐标；不触发单击涟漪。 */
+  consumeDoubleClick(): { x: number; y: number } | null {
+    if (!this.doubleArmed) return null;
+    this.doubleArmed = false;
+    const pos = this.doublePos;
+    this.doublePos = null;
+    return pos;
+  }
+
+  /** 输入模式切换时丢弃旧手势，避免 DOM 与全局双击重复触发。 */
+  clearGestures(): void {
+    this.pressing = false;
     this.pendingClick = null;
-    const world = this.cssToWorld(css.x, css.y);
-    return { x: world[0], y: world[1], z: 0 };
+    this.readyClick = null;
+    this.doubleArmed = false;
+    this.doublePos = null;
+    this.lastClickDone = null;
   }
 
   private readonly onLeave = () => {

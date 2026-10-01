@@ -1,7 +1,9 @@
+import { HOLOGRAM_GLSL, HOLOGRAM_SIGNAL_GLSL, ATTENTION_SIGNAL_GLSL } from '../../HologramField';
 import * as THREE from 'three';
 import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
 import { MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
 import { createParticleInitData } from '../particleInit';
+import { cameraPosition, DEFAULT_CAMERA, type OrbitCamera } from '../../ViewState';
 
 /**
  * WebGL2 后端：Three.js 点渲染 + GPUComputationRenderer 做 GPGPU 模拟。
@@ -18,6 +20,12 @@ const SIM_W = 256;
 const VEL_FRAG = /* glsl */ `
 uniform float uDt;
 uniform float uTime;
+uniform float uStructureTime;
+uniform float uFocusAngle;
+uniform float uAttention;
+uniform float uThoughtPhase;
+uniform float uThoughtPulse;
+uniform float uContemplation;
 uniform float uBreath;
 uniform float uBreathWave;
 uniform float uFormMix;
@@ -43,11 +51,13 @@ uniform float uContract;
 uniform float uEnergy;
 uniform float uPulseBoost;
 uniform float uSymmetry;
-uniform float uRing;
-uniform float uDual;
-uniform float uArms;
+uniform float uCoreGlow;
+uniform float uNeural;
+uniform float uFragment;
 uniform float uGrowth;
-uniform vec3 uCore2Offset;
+uniform float uStreamArc;
+uniform float uPulse;
+uniform float uDepthFade;
 uniform float uPress;
 uniform float uPressStrength;
 uniform vec3 uClickPos;
@@ -142,6 +152,7 @@ vec3 curlNoise(vec3 p) {
   return vec3(dpz.y - dpy.z, dpx.z - dpz.x, dpy.x - dpx.y);
 }
 
+${HOLOGRAM_GLSL}
 void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
   vec4 p4 = texture2D(texturePosition, uv);
@@ -150,8 +161,8 @@ void main() {
   float seed = p4.w;
   vec3 v = v4.xyz;
 
-  // 层级由种子确定：0 核心(12%) / 1 身体(74%) / 2 外围(14%)。
-  float layer = seed < 0.12 ? 0.0 : (seed < 0.86 ? 1.0 : 2.0);
+  // 层级：0 核心/内旋涡 / 1 身体（轨道/神经/膜）/ 2 外围碎片与弧流。
+  float layer = seed < 0.16 ? 0.0 : (seed < 0.84 ? 1.0 : 2.0);
   float h = hash1(seed * 41.53 + 0.37);
 
   // 个体方向：由种子确定的固定方向。
@@ -160,51 +171,14 @@ void main() {
   float s2 = sqrt(max(1.0 - a2 * a2, 0.0));
   vec3 dir = vec3(cos(a1) * s2, sin(a1) * s2, a2);
 
-  // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
-  // 受惊收缩：核心轻微收紧，身体明显收拢（由 BehaviorEngine 平滑驱动）。
-  float contractMul = layer < 0.5 ? (1.0 - 0.12 * uContract) : (1.0 - 0.22 * uContract);
   float sizeN = uBodyBase / 0.85;
-  float bodyR = bodyRadius(dir) * uBodyBase * uBreath * contractMul;
-  float radMul = layer < 0.5 ? mix(0.24, 0.46, h)
-               : layer < 1.5 ? mix(0.88, 1.04, h)
-               : mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - uBreathWave));
-  vec3 anchor = dir * bodyR * radMul;
+  float contractMul = 1.0 - 0.12 * uContract;
+  vec3 anchor = hologramAnchor(seed, uStructureTime, uGrowth) * uBodyBase * uBreath * contractMul;
 
-  // 成长：行星环（更锐利的环面）。
-  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + uRing * 0.13) {
-    anchor = dir * uBodyBase * 1.55 * uBreath;
-    anchor.y *= 0.12;
-  }
-  // 成长：双星——桥接粒子串联两核，两核互绕把身体拉成双瓣。
-  if (uDual > 0.5) {
-    if (seed >= 0.12 && seed < 0.20) {
-      anchor = uCore2Offset + anchor * 0.45;
-    } else if (seed >= 0.20 && seed < 0.26) {
-      float frac = (seed - 0.20) / 0.06;
-      anchor = uCore2Offset * frac + dir * bodyR * 0.3 * radMul;
-    }
-  }
-  // 成长：旋臂（触手状流苏，随成长伸长、缓慢旋转）。
-  float armAlong = (h - 0.75) / 0.25;
-  if (uArms >= 2.0 && layer > 0.5 && h >= 0.75) {
-    float armIdx = floor(mod(seed * 97.0, uArms));
-    float baseAngle = armIdx * 6.2831853 / uArms + uTime * 0.05;
-    float angle = baseAngle + armAlong * 0.9 + seed * 0.3;
-    float armRadius = uBodyBase * (0.8 + armAlong * 0.75);
-    float yArm = (hash1(seed * 13.7) - 0.5) * armAlong * bodyR * 0.8;
-    anchor = vec3(cos(angle) * armRadius, yArm, sin(angle) * armRadius);
-  }
-  // 成长：卫星粒子（远轨明亮大粒子，环绕母体）；轨道随团大小缩放。
-  if (uGrowth > 0.7 && seed >= 0.995) {
-    float ph = hash1(seed * 57.1) * 6.2831853;
-
-    float orbR = (1.2 + hash1(seed * 77.7) * 0.25) * sizeN;
-    anchor = vec3(
-      cos(uTime * 0.18 + ph) * orbR,
-      sin(uTime * 0.11 + ph * 2.0) * orbR * 0.3,
-      sin(uTime * 0.18 + ph) * orbR * 0.55);
-  }
-
+  vec3 aim = vec3(cos(uFocusAngle), sin(uFocusAngle), 0.0);
+  float directed = smoothstep(0.1, 0.9, dot(normalize(anchor + vec3(0.00001)), aim));
+  anchor += aim * uBodyBase * uAttention * directed * 0.34;
+  anchor *= 1.0 - uContemplation * 0.06;
   float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
   // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
   float softMul = layer < 0.5 ? mix(1.0, 0.6, uScatter) : mix(1.0, 0.15, uScatter);
@@ -212,17 +186,17 @@ void main() {
   float musicPush = max(0.0, uMusicBass - 0.03) + max(0.0, uPulseBoost - 0.05) * 0.5;
   softMul *= (1.0 - 0.28 * musicPush);
   vec3 target = uCore + anchor;
-  vec3 force = (target - p) * (uShellK * stiffMul * softMul);
+  vec3 force = (target - p) * (uShellK * (5.0 + 7.0 * uGrowth) * stiffMul * softMul);
 
   // 核心长程吸引。
   vec3 toCore = uCore - p;
   float dist = length(toCore) + 0.25 * sizeN;
-  force += (toCore / dist) * (uCoreG * sizeN * sizeN / dist);
+  force += (toCore / dist) * (uCoreG * 0.1 * sizeN * sizeN / dist);
 
   // 旋涡：凝聚期与受惊重组期共用——粒子绕核回旋后自然归位。
   float swirl = max(1.0 - uFormMix, uScatter * 0.85) * uSwirlBase;
   vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), toCore) + vec3(1e-5, 0.0, 0.0));
-  force += tangent * swirl * sizeN * smoothstep(5.0, 0.5, dist);
+  force += tangent * swirl * sizeN * 0.15 * smoothstep(5.0, 0.5, dist);
 
   // ---- 音乐动作：低频体积推、节拍炸开、高频搅动；幅度随团大小缩放 ----
   vec3 fromCore = -toCore;
@@ -238,12 +212,12 @@ void main() {
   float trebleMul = layer > 1.5 ? 1.8 : (layer > 0.5 ? 0.8 : 0.25);
   force += curlNoise(flowPos2) * (uMusicTreble * 3.2 * trebleMul * sizeN);
   // 高能：旋涡加快一点，整团转起来。
-  force += tangent * (uEnergy * 1.6 * sizeN) * smoothstep(4.5, 0.4, dist);
+  force += tangent * (uEnergy * 0.16 * sizeN) * smoothstep(4.5, 0.4, dist);
 
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
   vec3 flowPos = p * uCurlFreq + vec3(0.0, 0.0, uTime * uCurlSpeed);
   float curlMul = layer < 0.5 ? 0.3 : (layer < 1.5 ? 1.0 : 1.5);
-  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * curlMul * sizeN);
+  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * curlMul * sizeN * 0.10 * (1.0 - uContemplation * 0.8));
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   // 指针读数已经过感知延迟，此处只做纯力响应。
@@ -281,7 +255,7 @@ void main() {
   force -= v * smoothstep(0.0, max(uBodyBase, 0.01), excess) * 6.0;
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
-  vec3 nv = (v + force * uDt) * exp(-uDamping * uDt);
+  vec3 nv = (v + force * uDt) * exp(-(uDamping + 3.0) * uDt);
   gl_FragColor = vec4(nv, v4.w);
 }
 `;
@@ -301,6 +275,7 @@ void main() {
 
 const POINTS_VERT = /* glsl */ `
 uniform sampler2D uPosTex;
+uniform sampler2D uVelTex;
 uniform vec2 uSimSize;
 uniform float uPointSize;
 uniform float uPixelRatio;
@@ -308,6 +283,12 @@ uniform float uRevealT;
 uniform float uRevealSeconds;
 uniform float uFormMix;
 uniform float uTime;
+uniform float uStructureTime;
+uniform float uFocusAngle;
+uniform float uAttention;
+uniform float uThoughtPhase;
+uniform float uThoughtPulse;
+uniform float uContemplation;
 uniform float uEnergy;
 uniform float uPulseBoost;
 uniform float uGrowth;
@@ -317,17 +298,32 @@ varying float vAlpha;
 varying float vLayer;
 varying float vSat;
 varying float vSpark;
+varying vec2 vAxis;
+varying float vFilament;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
+${HOLOGRAM_SIGNAL_GLSL}
+${ATTENTION_SIGNAL_GLSL}
 void main() {
   float ref = aRef + 0.5;
   vec2 uv = vec2(mod(ref, uSimSize.x), floor(ref / uSimSize.x)) / uSimSize;
   vec4 p4 = texture2D(uPosTex, uv);
   vec3 p = p4.xyz;
   float seed = p4.w;
-  float layer = seed < 0.12 ? 0.0 : (seed < 0.86 ? 1.0 : 2.0);
+  float layer = seed < 0.16 ? 0.0 : (seed < 0.84 ? 1.0 : 2.0);
   float sat = uGrowth > 0.7 && seed >= 0.995 ? 1.0 : 0.0;
+  // 形态结构亮度：核心变亮、神经信号闪烁、弧流提亮、碎片压暗。
+  float coreGlow = 0.28 + 0.72 * uGrowth;
+  float neural = smoothstep(0.30, 0.85, uGrowth);
+  float spoke = smoothstep(0.20, 0.50, uGrowth) * (1.0 - 0.55 * smoothstep(0.78, 1.00, uGrowth));
+  float streamArc = smoothstep(0.72, 0.98, uGrowth);
+  float isNeural = (seed >= 0.16 && seed < 0.34) ? 1.0 : 0.0;
+  float isSpoke = (seed >= 0.66 && seed < 0.74) ? 1.0 : 0.0;
+  float isArc = seed >= 0.90 ? 1.0 : 0.0;
+  float isFrag = (seed >= 0.84 && seed < 0.90) ? 1.0 : 0.0;
+  // 脉络末端趋亮：与 HologramField 的 along 同哈希（参考图 2 的末端亮节点）。
+  float along = pow(hash1(seed * 43.1), 0.75);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -342,13 +338,33 @@ void main() {
   // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同，与 WebGPU 后端一致）。
   float tw = sin(uTime * (2.5 + seed * 3.5) + seed * 40.0);
   sizeMul *= (1.0 + uPulseBoost * 0.15 + uEnergy * 0.12 * tw);
-  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul;
+  sizeMul *= 1.0 + (layer < 0.5 ? coreGlow * 0.12 : 0.0);
+  sizeMul *= 1.0 + isArc * streamArc * 0.25;
+  // 一部分身体粒子沿真实 GPU 速度绘成细光丝，受惊后随运动自然松散。
+  vFilament = (seed >= 0.16 && seed < 0.84 && hash1(seed * 151.7) > 0.55) ? 1.0 : 0.0;
+  vec3 velocity = texture2D(uVelTex, uv).xyz;
+  vec4 ahead = projectionMatrix * modelViewMatrix * vec4(p + velocity * 0.04, 1.0);
+  vec2 axis = ahead.xy / max(ahead.w, 0.001) - gl_Position.xy / max(gl_Position.w, 0.001);
+  vAxis = normalize(axis + vec2(0.000001, 0.0));
+  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul * mix(1.0, 3.5, vFilament);
   vGlow = depthFade;
   vLayer = layer;
   vAlpha = reveal * mix(0.7, 1.0, uFormMix) * (1.0 + uEnergy * 0.2 * tw);
+  vAlpha *= (1.0 - isFrag * 0.50) * mix(0.28, 0.62, vFilament);
+  if (layer < 0.5) vAlpha *= 0.45;
+  if (seed >= 0.74 && seed < 0.84) vAlpha *= 0.18;
+  float orbitLane = floor(hash1(seed * 73.1 + 0.71) * 16.0);
+  if (seed >= 0.34 && seed < 0.66 && orbitLane > 3.0 + 11.0 * pow(uGrowth, 1.6)) {
+    vAlpha *= mix(1.0, 0.15, smoothstep(0.45, 0.65, uGrowth));
+  }
   // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGPU 后端一致）。
   vSpark = (0.70 + 0.60 * hash1(seed * 91.7 + 2.1))
          * (1.0 + uPulseBoost * 0.18 + uEnergy * 0.14 * tw);
+  vSpark *= hologramSignal(seed, uTime, uGrowth);
+  vSpark *= attentionSignal(seed, uThoughtPhase, uFocusAngle, uAttention, uThoughtPulse);
+  vSpark *= 1.0 + isNeural * neural * 0.55 + isSpoke * spoke * (0.30 + 0.50 * along)
+          + isArc * streamArc * 0.4 + (layer < 0.5 ? coreGlow * 0.08 : 0.0);
+  sizeMul *= 1.0 + isSpoke * spoke * along * 0.18;
 }
 `;
 
@@ -366,25 +382,32 @@ varying float vGlow;
 varying float vAlpha;
 varying float vLayer;
 varying float vSpark;
+varying vec2 vAxis;
+varying float vFilament;
 
 void main() {
   vec2 uv = gl_PointCoord - 0.5;
-  float d = length(uv) * 2.0;             // 0 中心 → 1 精灵边缘
+  vec2 axis = normalize(vAxis + vec2(0.000001, 0.0));
+  // PointCoord 的 y 方向与投影相反。
+  uv.y = -uv.y;
+  vec2 oriented = vec2(dot(uv, axis), dot(uv, vec2(-axis.y, axis.x)));
+  float d = length(oriented * vec2(1.0, mix(1.0, 5.0, vFilament))) * 2.0;             // 0 中心 → 1 精灵边缘
   // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
   float s = smoothstep(1.0, 0.32, d);
-  float a = 0.20 + 0.80 * s * s;
+  if (d > 1.0) discard;
+  float a = 0.05 + 0.95 * s * s;
   float hot = smoothstep(0.50, 0.05, d);  // 白热火花芯
 
   // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
   vec3 coreCol = mix(uCoreCol, uCoreCol * vec3(1.0, 0.97, 0.92), uMoodShift * 0.35)
-               * (1.20 + 0.60 * uBreathWave);
-  vec3 bodyCol = mix(uBodyCol, uBodyCol * vec3(1.0, 1.12, 1.18), uMoodShift * 0.25) * 1.38;
+               * (0.72 + 0.18 * uBreathWave);
+  vec3 bodyCol = mix(uBodyCol, uBodyCol * vec3(1.0, 1.12, 1.18), uMoodShift * 0.25) * 1.55;
   vec3 auraCol = uAuraCol * (0.9 + uTreble * 0.85);
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
-  float layerAlpha = vLayer < 0.5 ? 1.0 : (vLayer < 1.5 ? 0.85 : 0.55 + uTreble * 0.25);
-  col = mix(col, vec3(1.0, 0.94, 0.78), hot * 0.50); // 火花芯烧白
-  col *= (0.85 + 0.15 * vGlow) * uBrightness * vSpark;
-  col = mix(col, vec3(1.0, 0.96, 0.82), vSat * 0.55); // 卫星粒子亮金白
+  float layerAlpha = vLayer < 0.5 ? 0.72 : (vLayer < 1.5 ? 0.85 : 0.55 + uTreble * 0.25);
+  col = mix(col, mix(uCoreCol, vec3(1.0), 0.20), hot * 0.06); // 火花芯烧白
+  col *= (0.85 + 0.15 * vGlow) * sqrt(max(uBrightness, 0.0)) * 1.15 * vSpark;
+  col = mix(col, mix(uCoreCol, vec3(1.0), 0.28), vSat * 0.55); // 卫星粒子亮金白
   gl_FragColor = vec4(col * a, a * vAlpha * layerAlpha);
 }
 `;
@@ -406,6 +429,7 @@ export class WebGL2Backend {
   private readonly material: THREE.ShaderMaterial;
   private readonly points: THREE.Points;
   private disposed = false;
+  private view: OrbitCamera = { ...DEFAULT_CAMERA };
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -453,6 +477,8 @@ export class WebGL2Backend {
       uCoreG: { value: this.sim.coreGravity },
       uDamping: { value: this.sim.damping },
       uCurlStrength: { value: this.sim.curlStrength },
+      uStructureTime: { value: 0 }, uFocusAngle: { value: 0 }, uAttention: { value: 0 },
+      uThoughtPhase: { value: 0 }, uThoughtPulse: { value: 0 }, uContemplation: { value: 0 },
       uCurlFreq: { value: this.sim.curlFrequency },
       uCurlSpeed: { value: this.sim.curlSpeed },
       uBodyBase: { value: this.sim.bodyBase },
@@ -470,11 +496,13 @@ export class WebGL2Backend {
       uEnergy: { value: this.params.energyBase },
       uPulseBoost: { value: 0 },
       uSymmetry: { value: 0.4 },
-      uRing: { value: 0 },
-      uDual: { value: 0 },
-      uArms: { value: 1 },
+      uCoreGlow: { value: 0.28 },
+      uNeural: { value: 0 },
+      uFragment: { value: 0 },
       uGrowth: { value: 0 },
-      uCore2Offset: { value: new THREE.Vector3() },
+      uStreamArc: { value: 0 },
+      uPulse: { value: 0 },
+      uDepthFade: { value: 0.42 },
       uPress: { value: 0 },
       uPressStrength: { value: this.sim.pressStrength },
       uClickPos: { value: new THREE.Vector3() },
@@ -506,6 +534,7 @@ export class WebGL2Backend {
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         uPosTex: { value: null },
+        uVelTex: { value: null },
         uSimSize: { value: new THREE.Vector2(SIM_W, this.simH) },
         uPointSize: { value: params.pointSize },
         uPixelRatio: { value: 1 },
@@ -517,6 +546,8 @@ export class WebGL2Backend {
         uBrightness: { value: 1 },
         uGrowth: { value: 0 },
         uTime: { value: 0 },
+        uStructureTime: { value: 0 }, uFocusAngle: { value: 0 }, uAttention: { value: 0 },
+        uThoughtPhase: { value: 0 }, uThoughtPulse: { value: 0 }, uContemplation: { value: 0 },
         uEnergy: { value: params.energyBase },
         uPulseBoost: { value: 0 },
         uCoreCol: { value: new THREE.Vector3(1.0, 0.95, 0.82) },
@@ -575,6 +606,17 @@ export class WebGL2Backend {
     >;
     u.uDt.value = dt;
     u.uTime.value = state.time;
+    u.uStructureTime.value = state.structureTime;
+    u.uFocusAngle.value = state.focusAngle;
+    u.uAttention.value = state.attention;
+    u.uThoughtPhase.value = state.thoughtPhase;
+    u.uThoughtPulse.value = state.thoughtPulse;
+    u.uContemplation.value = state.contemplation;
+    const cognitionPaint = this.material.uniforms;
+    cognitionPaint.uFocusAngle.value = state.focusAngle;
+    cognitionPaint.uAttention.value = state.attention;
+    cognitionPaint.uThoughtPhase.value = state.thoughtPhase;
+    cognitionPaint.uThoughtPulse.value = state.thoughtPulse;
     u.uBreath.value = state.breathScale;
     u.uBreathWave.value = state.breathWave;
     u.uFormMix.value = state.formMix;
@@ -602,19 +644,13 @@ export class WebGL2Backend {
     u.uMusicBass.value = state.musicBass * (state.musicActive > 0.5 ? 1 : 0);
     u.uMusicTreble.value = state.musicTreble * (state.musicActive > 0.5 ? 1 : 0);
     u.uSymmetry.value = state.symmetry;
-    u.uRing.value = state.ring;
-    u.uDual.value = state.dualCore;
-    u.uArms.value = state.arms;
+    u.uCoreGlow.value = state.form.coreGlow;
+    u.uNeural.value = state.form.neural;
+    u.uFragment.value = state.form.fragment;
     u.uGrowth.value = state.growth;
-    u.uArms.value = state.arms;
-    u.uGrowth.value = state.growth;
-    // 双核间距随团大小缩放，避免调小后仍被拉得很开。
-    const sizeN = this.sim.bodyBase / 0.85;
-    (u.uCore2Offset.value as THREE.Vector3).set(
-      state.core2Offset[0] * sizeN,
-      state.core2Offset[1] * sizeN,
-      state.core2Offset[2] * sizeN,
-    );
+    u.uStreamArc.value = state.form.streamArc;
+    u.uPulse.value = state.form.pulse;
+    u.uDepthFade.value = state.form.depthFade;
     u.uPress.value = state.pressRamp;
     u.uPointerPushMul.value = state.pointerPushMul;
     (u.uClickPos.value as THREE.Vector3).set(
@@ -629,13 +665,14 @@ export class WebGL2Backend {
     m.uTime.value = state.time;
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
-    m.uBrightness.value = state.brightness * this.brightnessScale;
+    m.uBrightness.value = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / 0.85, 1.8));
     m.uTreble.value = state.musicTreble;
     m.uGrowth.value = state.growth;
     m.uMoodShift.value = state.moodShift;
 
     this.gpu.compute();
     m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
+    m.uVelTex.value = this.gpu.getCurrentRenderTarget(this.velVar).texture;
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -645,6 +682,19 @@ export class WebGL2Backend {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.material.uniforms.uPixelRatio.value = dpr;
+  }
+
+  /** 观察空间相机：球坐标环绕 target。 */
+  setView(view: OrbitCamera): void {
+    this.view = { ...view, target: [...view.target] };
+    const [x, y, z] = cameraPosition(this.view);
+    this.camera.position.set(x, y, z);
+    this.camera.lookAt(view.target[0], view.target[1], view.target[2]);
+    this.camera.updateMatrixWorld();
+  }
+
+  getView(): OrbitCamera {
+    return { ...this.view };
   }
 
   dispose(): void {

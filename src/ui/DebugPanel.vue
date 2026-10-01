@@ -4,6 +4,7 @@
  * 通过 window 上的调试句柄操作生命时钟与记忆，不触碰核心引擎内部。
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { t } from '../i18n';
 
 const w = window as typeof window & {
   __emergeClock?: {
@@ -23,7 +24,7 @@ const scales = [1, 10, 100, 500, 2000];
 
 function applyScale(s: number): void {
   setScale(s);
-  lastAction.value = `时间倍率 ×${s} ✓`;
+  lastAction.value = t('dbg.scaleDone', { n: s });
 }
 let flashTimer = 0;
 let timer = 0;
@@ -49,18 +50,18 @@ onBeforeUnmount(() => clearInterval(timer));
 
 function forwardDays(n: number): void {
   w.__emergeClock?.advance(n * 86400000);
-  flash(`+${n} 天 ✓`);
+  flash(t('dbg.advanceDone', { n }));
 }
 function setScale(n: number): void {
   if (w.__emergeClock) w.__emergeClock.scale = n;
-  flash(`时间倍率 ×${n} ✓`);
+  flash(t('dbg.scaleDone', { n }));
 }
 function addInteractionMinutes(n: number): void {
   const m = w.__emergeMemory;
   if (m) {
     m.state.interactionMinutes += n;
     m.state.interactionCredit += n;
-    flash(`+${n} 分钟互动 ✓`);
+    flash(t('dbg.interactionDone', { n }));
   }
 }
 function simulateAbsence(days: number): void {
@@ -82,15 +83,15 @@ function resetLife(): void {
 
 <template>
   <div class="dbg">
-    <div class="row title">时间加速调试</div>
-    <div class="row">虚拟时间 {{ vnow }}（×{{ w.__emergeClock?.scale ?? 1 }}）</div>
+    <div class="row title">{{ t('dbg.title') }}</div>
+    <div class="row">{{ t('dbg.virtual') }} {{ vnow }}（×{{ w.__emergeClock?.scale ?? 1 }}）</div>
     <div class="row action">{{ lastAction }}</div>
     <div class="btns">
       <button @click="setScale(1)">×1</button>
       <button @click="setScale(100)">×100</button>
       <button @click="setScale(1000)">×1000</button>
     </div>
-    <div class="row">时间倍率</div>
+    <div class="row">{{ t('dbg.scale') }}</div>
     <div class="btns">
       <button
         v-for="s in scales"
@@ -100,10 +101,10 @@ function resetLife(): void {
       >×{{ s }}</button>
     </div>
     <div class="row btns">
-      <button @click="forwardDays(1)">+1 天</button>
-      <button @click="addInteractionMinutes(60)">+60 分钟互动</button>
-      <button @click="simulateAbsence(3)">模拟离开 3 天</button>
-      <button class="danger" @click="resetLife">重置生命</button>
+      <button @click="forwardDays(1)">{{ t('dbg.advance1') }}</button>
+      <button @click="addInteractionMinutes(60)">{{ t('dbg.interaction60') }}</button>
+      <button @click="simulateAbsence(3)">{{ t('dbg.absence3') }}</button>
+      <button class="danger" @click="resetLife">{{ t('dbg.reset') }}</button>
     </div>
   </div>
 </template>

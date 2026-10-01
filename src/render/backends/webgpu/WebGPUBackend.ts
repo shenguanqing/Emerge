@@ -1,5 +1,7 @@
+import { HOLOGRAM_WGSL, HOLOGRAM_SIGNAL_WGSL, ATTENTION_SIGNAL_WGSL } from '../../HologramField';
 import { MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
 import { createParticleInitData } from '../particleInit';
+import { DEFAULT_CAMERA, viewMatrix, type OrbitCamera } from '../../ViewState';
 
 /**
  * WebGPU 后端：Compute 着色器做位置/速度积分（storage buffer ping-pong），
@@ -22,9 +24,9 @@ struct Sim {
   data8: vec4f,          // pointerPushMul, pulseBoost, press, pad
   data9: vec4f,          // pressStrength, pad, pad, pad
   clickPos_pulse: vec4f, // click.xyz, clickPulse
-  data10: vec4f,         // symmetry, ring, dual, arms
-  data11: vec4f,         // growth, pad, pad, pad
-  core2Offset: vec4f,    // 第二核心偏移
+  data10: vec4f,         // symmetry, coreGlow, neural, fragment
+  data11: vec4f,         // growth, streamArc, pulse, depthFade
+  cognition: vec4f,      // focus angle, attention, thought phase, contemplation
 };
 
 @group(0) @binding(0) var<storage, read> posIn: array<vec4f>;
@@ -118,6 +120,7 @@ fn curlNoise(pt: vec3f) -> vec3f {
   return vec3f(dpz.y - dpy.z, dpx.z - dpz.x, dpy.x - dpx.y);
 }
 
+${HOLOGRAM_WGSL}
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let i = gid.x;
@@ -146,8 +149,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let formMix = sim.data4.x;
   let breathWave = sim.data4.y;
 
-  // 层级由种子确定：0 核心(12%) / 1 身体(74%) / 2 外围(14%)。
-  let layer = select(select(2.0, 1.0, seed < 0.86), 0.0, seed < 0.12);
+  // 层级：0 核心/内旋涡(<0.16) / 1 身体(轨道/神经/膜) / 2 外围碎片与弧流(>=0.84)。
+  let layer = select(select(2.0, 1.0, seed < 0.84), 0.0, seed < 0.16);
   let h = hash1(seed * 41.53 + 0.37);
 
   // 个体方向：由种子确定的固定方向。
@@ -156,50 +159,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let s2 = sqrt(max(1.0 - a2 * a2, 0.0));
   let dir = vec3f(cos(a1) * s2, sin(a1) * s2, a2);
 
-  // 分层锚点：核心致密内聚，身体贴合有机轮廓，外围松散且呼吸反相。
-  // 受惊收缩：核心轻微收紧，身体明显收拢（与 WebGL2 后端一致）。
-  var contractMul = 1.0 - 0.22 * sim.data7.z;
-  if (layer < 0.5) { contractMul = 1.0 - 0.12 * sim.data7.z; }
-  let bodyR = bodyRadius(dir, sim.data10.x) * bodyBase * breath * contractMul;
-  var radMul = mix(1.22, 1.65, h) * (1.0 + 0.08 * (1.0 - breathWave));
-  if (layer < 0.5) { radMul = mix(0.24, 0.46, h); }
-  if (layer > 0.5 && layer < 1.5) { radMul = mix(0.88, 1.04, h); }
-  var anchor = dir * bodyR * radMul;
+  let contractMul = 1.0 - 0.12 * sim.data7.z;
+  var anchor = hologramAnchor(seed, sim.data3.z, sim.data11.x) * bodyBase * breath * contractMul;
 
-  // 成长：行星环（身体层 h 窗口展平为环面，与 WebGL2 同窗口）。
-  if (layer > 0.5 && layer < 1.5 && h >= 0.62 && h < 0.62 + sim.data10.y * 0.13) {
-    anchor = dir * bodyBase * 1.55 * breath;
-    anchor.y = anchor.y * 0.12;
-  }
-  // 成长：双星——副核 + 桥接粒子串联两核，身体拉成双瓣（与 WebGL2 一致）。
-  if (sim.data10.z > 0.5) {
-    if (seed >= 0.12 && seed < 0.20) {
-      anchor = sim.core2Offset.xyz + anchor * 0.45;
-    } else if (seed >= 0.20 && seed < 0.26) {
-      let frac = (seed - 0.20) / 0.06;
-      anchor = sim.core2Offset.xyz * frac + dir * bodyR * 0.3 * radMul;
-    }
-  }
-  // 成长：旋臂（触手状流苏，随成长伸长、缓慢旋转；与 WebGL2 一致）。
-  if (sim.data10.w >= 2.0 && layer > 0.5 && h >= 0.75) {
-    let armAlong = (h - 0.75) / 0.25;
-    let armIdx = floor((seed * 97.0) % sim.data10.w);
-    let baseAngle = armIdx * 6.2831853 / sim.data10.w + time * 0.05;
-    let angle = baseAngle + armAlong * 0.9 + seed * 0.3;
-    let armRadius = bodyBase * (0.8 + armAlong * 0.75);
-    let yArm = (hash1(seed * 13.7) - 0.5) * armAlong * bodyR * 0.8;
-    anchor = vec3f(cos(angle) * armRadius, yArm, sin(angle) * armRadius);
-  }
-  // 成长：卫星粒子（远轨明亮大粒子，环绕母体）；轨道随团大小缩放。
-  if (sim.data11.x > 0.7 && seed >= 0.995) {
-    let ph = hash1(seed * 57.1) * 6.2831853;
-    let orbR = (1.2 + hash1(seed * 77.7) * 0.25) * sizeN;
-    anchor = vec3f(
-      cos(time * 0.18 + ph) * orbR,
-      sin(time * 0.11 + ph * 2.0) * orbR * 0.3,
-      sin(time * 0.18 + ph) * orbR * 0.55);
-  }
-
+  let aim = vec3f(cos(sim.cognition.x), sin(sim.cognition.x), 0.0);
+  let directed = smoothstep(0.1, 0.9, dot(normalize(anchor + vec3f(0.00001)), aim));
+  anchor += aim * bodyBase * sim.cognition.y * directed * 0.34;
+  anchor *= 1.0 - sim.cognition.w * 0.06;
   var stiffMul = 0.55;
   if (layer < 0.5) { stiffMul = 3.2; }
   if (layer > 0.5 && layer < 1.5) { stiffMul = 1.0; }
@@ -214,17 +180,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let musicPush = max(0.0, musicBass - 0.03) + max(0.0, pulseBoost - 0.05) * 0.5;
   softMul *= (1.0 - 0.28 * musicPush);
   let goal = core + anchor;
-  var force = (goal - p) * (shellK * stiffMul * softMul);
+  var force = (goal - p) * (shellK * (5.0 + 7.0 * sim.data11.x) * stiffMul * softMul);
 
   // 核心长程吸引。
   let toCore = core - p;
   let dist = length(toCore) + 0.25 * sizeN;
-  force = force + (toCore / dist) * (coreG * sizeN * sizeN / dist);
+  force = force + (toCore / dist) * (coreG * 0.1 * sizeN * sizeN / dist);
 
   // 凝聚期旋涡：绕竖轴的切向力，离核越远越强，随成形衰减消失。
   let swirl = max(1.0 - formMix, sim.data7.x * 0.85) * swirlBase;
   let tangent = normalize(cross(vec3f(0.0, 1.0, 0.0), toCore) + vec3f(1e-5, 0.0, 0.0));
-  force = force + tangent * swirl * sizeN * smoothstep(5.0, 0.5, dist);
+  force = force + tangent * swirl * sizeN * 0.15 * smoothstep(5.0, 0.5, dist);
 
   // ---- 音乐动作：幅度随团大小缩放 ----
   let fromCore = -toCore;
@@ -238,14 +204,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   if (layer > 0.5 && layer < 1.5) { trebleMul = 0.8; }
   if (layer > 1.5) { trebleMul = 1.8; }
   force = force + curlNoise(flowPos2) * (musicTreble * 3.2 * trebleMul * sizeN);
-  force = force + tangent * (sim.data7.w * 1.6 * sizeN) * smoothstep(4.5, 0.4, dist);
+  force = force + tangent * (sim.data7.w * 0.16 * sizeN) * smoothstep(4.5, 0.4, dist);
 
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
   let flowPos = p * curlFreq + vec3f(0.0, 0.0, time * curlSpeed * (1.0 + 1.2 * sim.data8.y));
   var curlMul = 1.5;
   if (layer < 0.5) { curlMul = 0.3; }
   if (layer > 0.5 && layer < 1.5) { curlMul = 1.0; }
-  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * (1.0 + 0.7 * sim.data8.y) * curlMul * sizeN);
+  force = force + curlNoise(flowPos) * (curlStrength * (0.55 + 0.9 * sim.data7.w) * (1.0 + 0.7 * sim.data8.y) * curlMul * sizeN * 0.10 * (1.0 - sim.cognition.w * 0.8));
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   if (sim.pointerPos_act.w > 0.01) {
@@ -280,7 +246,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   force = force - v * smoothstep(0.0, max(bodyBase, 0.01), excess) * 6.0;
 
   // 半隐式欧拉 + 指数阻尼；dt 由 CPU 侧钳制。
-  v = (v + force * dt) * exp(-damping * dt);
+  v = (v + force * dt) * exp(-(damping + 3.0) * dt);
   let np = p + v * dt;
 
   posOut[i] = vec4f(np, seed);
@@ -303,6 +269,8 @@ struct R {
 @group(0) @binding(0) var<storage, read> pos: array<vec4f>;
 @group(0) @binding(1) var<uniform> r: R;
 
+
+
 struct VOut {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
@@ -310,14 +278,29 @@ struct VOut {
   @location(2) alpha: f32,
   @location(3) @interpolate(flat) sat: f32,
   @location(4) glowBoost: f32,
+  @location(5) axis: vec2f,
+  @location(6) @interpolate(flat) filament: f32,
+  @location(7) depthFade: f32,
 };
 
+${HOLOGRAM_SIGNAL_WGSL}
+${ATTENTION_SIGNAL_WGSL}
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   let corner = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
   let p4 = pos[ii];
   let seed = p4.w;
-  let layer = select(select(2.0, 1.0, seed < 0.86), 0.0, seed < 0.12);
+  let layer = select(select(2.0, 1.0, seed < 0.84), 0.0, seed < 0.16);
+  let coreGlow = 0.28 + 0.72 * r.data4.y;
+  let neural = smoothstep(0.30, 0.85, r.data4.y);
+  let spoke = smoothstep(0.20, 0.50, r.data4.y) * (1.0 - 0.55 * smoothstep(0.78, 1.00, r.data4.y));
+  let streamArc = smoothstep(0.72, 0.98, r.data4.y);
+  let isNeural = select(0.0, 1.0, seed >= 0.16 && seed < 0.34);
+  let isSpoke = select(0.0, 1.0, seed >= 0.66 && seed < 0.74);
+  let isArc = select(0.0, 1.0, seed >= 0.90);
+  let isFrag = select(0.0, 1.0, seed >= 0.84 && seed < 0.90);
+  // 脉络末端趋亮：与 HologramField 的 along 同哈希（参考图 2 的末端亮节点）。
+  let along = pow(hash1(seed * 43.1), 0.75);
 
   let clip = r.vp * vec4f(p4.xyz, 1.0);
   let depthFade = clamp(2.5 / max(clip.w, 0.001), 0.2, 2.0);
@@ -334,17 +317,35 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同）。
   let tw = sin(r.data3.w * (2.5 + p4.w * 3.5) + p4.w * 40.0);
   sizeMul = sizeMul * (1.0 + r.data3.y * 0.15 + r.data3.z * 0.12 * tw);
-  let pointPx = r.data.x * depthFade * sizeMul;
+  if (layer < 0.5) { sizeMul = sizeMul * (1.0 + coreGlow * 0.12); }
+  sizeMul = sizeMul * (1.0 + isArc * streamArc * 0.25);
+  sizeMul = sizeMul * (1.0 + isSpoke * spoke * along * 0.18);
+  let filament = select(0.0, 1.0, seed >= 0.16 && seed < 0.84 && hash1(seed * 151.7) > 0.55);
+  let ahead = r.vp * vec4f(p4.xyz + velIn[ii].xyz * 0.04, 1.0);
+  let axis = normalize(ahead.xy / max(ahead.w, 0.001) - clip.xy / max(clip.w, 0.001) + vec2f(0.000001, 0.0));
+  let pointPx = r.data.x * depthFade * sizeMul * mix(1.0, 3.5, filament);
   let halfNdc = corner * (pointPx / vec2f(r.data.y, r.data.z));
 
   var result: VOut;
   result.position = vec4f(clip.xy + halfNdc * clip.w, clip.z, clip.w);
   result.uv = corner;
+  result.axis = axis;
+  result.filament = filament;
+  result.depthFade = depthFade;
   result.layer = layer;
-  result.alpha = reveal * mix(0.7, 1.0, r.data2.x) * (1.0 + r.data3.z * 0.2 * tw);
+  result.alpha = reveal * mix(0.7, 1.0, r.data2.x) * (1.0 + r.data3.z * 0.2 * tw) * (1.0 - isFrag * 0.50) * mix(0.28, 0.62, filament) * select(1.0, 0.45, layer < 0.5);
+  if (seed >= 0.74 && seed < 0.84) { result.alpha *= 0.18; }
+  let orbitLane = floor(hash1(seed * 73.1 + 0.71) * 16.0);
+  if (seed >= 0.34 && seed < 0.66 && orbitLane > 3.0 + 11.0 * pow(r.data4.y, 1.6)) {
+    result.alpha *= mix(1.0, 0.15, smoothstep(0.45, 0.65, r.data4.y));
+  }
   // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGL2 后端一致）。
   result.glowBoost = (0.70 + 0.60 * hash1(p4.w * 91.7 + 2.1))
-                   * (1.0 + r.data3.y * 0.18 + r.data3.z * 0.14 * tw);
+                   * (1.0 + r.data3.y * 0.18 + r.data3.z * 0.14 * tw)
+                   * (1.0 + isNeural * neural * 0.55 + isSpoke * spoke * (0.30 + 0.50 * along) + isArc * streamArc * 0.4)
+                   * (1.0 + select(0.0, coreGlow * 0.08, layer < 0.5));
+  result.glowBoost *= hologramSignal(seed, r.data3.w, r.data4.y);
+  result.glowBoost *= attentionSignal(seed, r.colCore.w, r.data.w, r.data4.w, r.colAura.w);
   // 卫星标记：远轨亮金大粒子（与 WebGL2 一致）。
   result.sat = select(0.0, 1.0, r.data4.y > 0.7 && seed >= 0.995);
   return result;
@@ -352,26 +353,29 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
 
 @fragment
 fn fs(vin: VOut) -> @location(0) vec4f {
-  let d = length(vin.uv);
+  let axis = normalize(vin.axis + vec2f(0.000001, 0.0));
+  let oriented = vec2f(dot(vin.uv, axis), dot(vin.uv, vec2f(-axis.y, axis.x)));
+  let d = length(oriented * vec2f(1.0, mix(1.0, 5.0, vin.filament)));
   // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
   let s = smoothstep(1.0, 0.32, d);
-  var a = 0.20 + 0.80 * s * s;
+  if (d > 1.0) { discard; }
+  var a = 0.05 + 0.95 * s * s;
   let hot = smoothstep(0.50, 0.05, d); // 白热火花芯
 
   // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
   let breathWave = r.data2.y;
   let coreCol = mix(r.colCore.xyz, r.colCore.xyz * vec3f(1.0, 0.97, 0.92), r.data3.x * 0.35)
-              * (1.20 + 0.60 * breathWave);
-  let bodyCol = mix(r.colBody.xyz, r.colBody.xyz * vec3f(1.0, 1.12, 1.18), r.data3.x * 0.25) * 1.38;
+              * (0.72 + 0.18 * breathWave);
+  let bodyCol = mix(r.colBody.xyz, r.colBody.xyz * vec3f(1.0, 1.12, 1.18), r.data3.x * 0.25) * 1.55;
   let auraCol = r.colAura.xyz * (0.9 + r.data4.z * 0.85);
   var col = auraCol;
   var layerAlpha = 0.55 + r.data4.z * 0.25;
-  if (vin.layer < 0.5) { col = coreCol; layerAlpha = 1.0; }
+  if (vin.layer < 0.5) { col = coreCol; layerAlpha = 0.72; }
   if (vin.layer > 0.5 && vin.layer < 1.5) { col = bodyCol; layerAlpha = 0.85; }
-  let depthFade = clamp(2.5 / max(vin.position.w, 0.001), 0.2, 2.0);
-  var glow = mix(col, vec3f(1.0, 0.94, 0.78), hot * 0.50) // 火花芯烧白
-           * (0.85 + 0.15 * depthFade) * r.data4.x * vin.glowBoost;
-  glow = mix(glow, vec3f(1.0, 0.96, 0.82), vin.sat * 0.55); // 卫星粒子亮金白
+  let depthFade = vin.depthFade;
+  var glow = mix(col, mix(r.colCore.xyz, vec3f(1.0), 0.20), hot * 0.06) // 火花芯烧白
+           * (0.85 + 0.15 * depthFade) * sqrt(max(r.data4.x, 0.0)) * 1.15 * vin.glowBoost;
+  glow = mix(glow, mix(r.colCore.xyz, vec3f(1.0), 0.28), vin.sat * 0.55); // 卫星粒子亮金白
   return vec4f(glow * a, a * vin.alpha * layerAlpha);
 }
 `;
@@ -428,6 +432,7 @@ export class WebGPUBackend {
   private clearAlpha = 1;
   private readIdx = 0;
   private disposed = false;
+  private view: OrbitCamera = { ...DEFAULT_CAMERA };
 
   private constructor(
     device: GPUDevice,
@@ -508,6 +513,7 @@ export class WebGPUBackend {
         entries: [
           { binding: 0, resource: { buffer: this.posBuf[read] } },
           { binding: 1, resource: { buffer: this.renderUniform } },
+          { binding: 2, resource: { buffer: this.velBuf[read] } },
         ],
       });
     this.renderBinds = [mkRenderBind(0), mkRenderBind(1)];
@@ -533,7 +539,7 @@ export class WebGPUBackend {
     // 未捕获的管线/着色器校验错误上抛到诊断通道，避免静默黑屏。
     device.onuncapturederror = (ev) => {
       const w = window as typeof window & { __emergeErrors?: string[] };
-      w.__emergeErrors?.push(`GPU: ${ev.error.message.slice(0, 300)}`);
+      if (w.__emergeErrors && w.__emergeErrors.length < 20) w.__emergeErrors.push(`GPU: ${ev.error.message.slice(0, 300)}`);
     };
   }
 
@@ -557,7 +563,16 @@ export class WebGPUBackend {
         format,
         alphaMode: transparent ? 'premultiplied' : 'opaque',
       });
+      device.pushErrorScope('validation');
       const backend = new WebGPUBackend(device, context, format, canvas, params, sim);
+      const validation = await device.popErrorScope();
+      if (validation) {
+        console.warn('[WebGPU]', validation.message);
+        backend.dispose();
+        context.unconfigure();
+        device.destroy();
+        return null;
+      }
       backend.clearAlpha = transparent ? 0 : 1;
       return backend;
     } catch {
@@ -568,11 +583,17 @@ export class WebGPUBackend {
   private updateCameraUniform(): void {
     const aspect = this.canvas.width / Math.max(this.canvas.height, 1);
     const proj = perspectiveWebGPU((50 * Math.PI) / 180, aspect, 0.1, 100);
-    // 视图：相机固定在 (0, 0, 7) 看向原点，即平移 (0, 0, -7)。
-    const view = new Float32Array(16);
-    view[0] = 1; view[5] = 1; view[10] = 1; view[15] = 1;
-    view[14] = -7;
-    this.renderData.set(mat4Multiply(proj, view), 0);
+    this.renderData.set(mat4Multiply(proj, viewMatrix(this.view)), 0);
+  }
+
+  /** 观察空间相机：球坐标环绕原点。 */
+  setView(view: OrbitCamera): void {
+    this.view = { ...view };
+    this.updateCameraUniform();
+  }
+
+  getView(): OrbitCamera {
+    return { ...this.view };
   }
 
   /** 每帧执行一次 Compute 步进并渲染。 */
@@ -593,6 +614,9 @@ export class WebGPUBackend {
     this.simData[10] = this.sim.curlFrequency;
     this.simData[11] = this.sim.curlSpeed;
     this.simData[12] = this.particleCount;
+    this.simData[13] = state.thoughtPulse;
+    this.simData[14] = state.structureTime;
+    this.simData.set([state.focusAngle, state.attention, state.thoughtPhase, state.contemplation], 60);
     this.simData[16] = state.formMix;
     this.simData[17] = state.breathWave;
     this.simData[20] = this.sim.bodyBase;
@@ -620,14 +644,13 @@ export class WebGPUBackend {
     this.simData[42] = state.pressRamp;
     this.simData[44] = this.sim.pressStrength;
     this.simData[52] = state.symmetry;
-    this.simData[53] = state.ring;
-    this.simData[54] = state.dualCore;
-    this.simData[55] = state.arms;
+    this.simData[53] = state.form.coreGlow;
+    this.simData[54] = state.form.neural;
+    this.simData[55] = state.form.fragment;
     this.simData[56] = state.growth;
-    const sizeN = this.sim.bodyBase / 0.85;
-    this.simData[60] = state.core2Offset[0] * sizeN;
-    this.simData[61] = state.core2Offset[1] * sizeN;
-    this.simData[62] = state.core2Offset[2] * sizeN;
+    this.simData[57] = state.form.streamArc;
+    this.simData[58] = state.form.pulse;
+    this.simData[59] = state.form.depthFade;
     this.simData[48] = state.clickPos[0];
     this.simData[49] = state.clickPos[1];
     this.simData[50] = state.clickPos[2];
@@ -642,9 +665,11 @@ export class WebGPUBackend {
     this.renderData[25] = state.pulseBoost;
     this.renderData[26] = state.energy;
     this.renderData[27] = state.time;
-    this.renderData[28] = state.brightness * this.brightnessScale;
+    this.renderData[28] = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / 0.85, 1.8));
     this.renderData[29] = state.growth;
     this.renderData[30] = state.musicTreble;
+    this.renderData[19] = state.focusAngle; this.renderData[31] = state.attention;
+    this.renderData[35] = state.thoughtPhase; this.renderData[39] = state.contemplation; this.renderData[43] = state.thoughtPulse;
     // 主题色（setVisual 写入 renderData[32..43]）。
     d.queue.writeBuffer(this.renderUniform, 0, this.renderData);
 

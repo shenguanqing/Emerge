@@ -13,9 +13,11 @@ import {
   resolveColors,
   saveSettings,
   type AppSettings,
+  type ColorTheme,
 } from '../core/settings';
 import type { LifeEngine } from '../core/LifeEngine';
 import { invoke, isDesktop, listenNative } from '../platform/desktop';
+import { locale, localeMode, setLocaleMode, stageDisplayName, t, type LocaleMode } from '../i18n';
 
 const s = reactive<AppSettings>(loadSettings());
 const windowError = ref('');
@@ -25,11 +27,11 @@ type ThemeMode = 'auto' | 'light' | 'dark';
 const themeMode = ref<ThemeMode>(
   (localStorage.getItem('emerge.ui.theme') as ThemeMode | null) ?? 'auto',
 );
-const themeOptions: { id: ThemeMode; label: string }[] = [
-  { id: 'auto', label: '自动' },
-  { id: 'light', label: '浅色' },
-  { id: 'dark', label: '深色' },
-];
+const themeOptions = computed(() => [
+  { id: 'auto' as ThemeMode, label: t('theme.auto') },
+  { id: 'light' as ThemeMode, label: t('theme.light') },
+  { id: 'dark' as ThemeMode, label: t('theme.dark') },
+]);
 function setTheme(mode: ThemeMode): void {
   themeMode.value = mode;
   localStorage.setItem('emerge.ui.theme', mode);
@@ -37,6 +39,16 @@ function setTheme(mode: ThemeMode): void {
 const themeClass = computed(() =>
   themeMode.value === 'dark' ? 'dark' : themeMode.value === 'light' ? 'light' : '',
 );
+
+/** 界面语言：auto 跟随系统，可手动切 zh / en。 */
+const langOptions = computed(() => [
+  { id: 'auto' as LocaleMode, label: t('lang.auto') },
+  { id: 'zh' as LocaleMode, label: '中文' },
+  { id: 'en' as LocaleMode, label: 'English' },
+]);
+function setLang(mode: LocaleMode): void {
+  setLocaleMode(mode);
+}
 
 /** 隐藏：连点页脚提示 5 次（2.5s 内）解锁时间加速。 */
 const timeUnlocked = ref(false);
@@ -49,33 +61,24 @@ const currentScale = ref(1);
 const lastAction = ref('');
 const scales = [1, 10, 100, 500, 2000];
 
-const STAGES = [
-  { id: 'nascent', name: '初生', range: '0–30%', desc: '紧凑星云，身体还在凝聚' },
-  { id: 'formed', name: '成形', range: '30–55%', desc: '身体轮廓稳定成形' },
-  { id: 'ringed', name: '环生', range: '55–85%', desc: '长出行星环，结构更丰富' },
-  { id: 'dual', name: '双核', range: '85–100%', desc: '解锁第二核心与旋臂' },
-] as const;
+const STAGES = computed(() => [
+  { id: 'origin', name: stageDisplayName('origin'), range: '0–30%', desc: t('stage.originDesc') },
+  { id: 'awaken', name: stageDisplayName('awaken'), range: '30–55%', desc: t('stage.awakenDesc') },
+  { id: 'conscious', name: stageDisplayName('conscious'), range: '55–85%', desc: t('stage.consciousDesc') },
+  { id: 'emerge', name: stageDisplayName('emerge'), range: '85–100%', desc: t('stage.emergeDesc') },
+]);
 
-const PATHS = [
-  {
-    name: '陪伴',
-    desc: '窗口显示时累计，隐藏、关闭与休眠不计。仅靠陪伴也能成熟。',
-  },
-  {
-    name: '温和互动',
-    desc: '粒子附近的真实低速移动、轻点后的短暂回应。快速划过不计。每日前 20 分钟贡献较高。',
-  },
-  {
-    name: '音乐',
-    desc: '连续有声两秒起计，静音不算。每日前 30 分钟贡献较高，之后递减。',
-  },
-] as const;
+const PATHS = computed(() => [
+  { name: t('path.companion'), desc: t('path.companionDesc') },
+  { name: t('path.interaction'), desc: t('path.interactionDesc') },
+  { name: t('path.music'), desc: t('path.musicDesc') },
+]);
 
 const stageIndex = computed(() => {
   const g = growthInfo.value?.growth ?? 0;
   return g < 0.3 ? 0 : g < 0.55 ? 1 : g < 0.85 ? 2 : 3;
 });
-const stageName = computed(() => STAGES[stageIndex.value].name);
+const stageName = computed(() => STAGES.value[stageIndex.value].name);
 
 /** 滑块显示值：整数百分比 / 角度，只读，靠滑杆调整。 */
 const bodyScalePct = computed(() => Math.round(s.bodyScale * 100));
@@ -101,13 +104,13 @@ function onSecretTap(): void {
     titleTaps.value = 0;
     titleLit.value = 0;
     timeUnlocked.value = true;
-    lastAction.value = '时间加速已解锁';
+    lastAction.value = t('time.unlocked');
   }
 }
 
 function applyScale(n: number): void {
   currentScale.value = n;
-  lastAction.value = `时间倍率 ×${n}`;
+  lastAction.value = t('time.lastScale', { n });
   emitTauri('time-control', { type: 'scale', value: n });
 }
 
@@ -117,12 +120,12 @@ function timeAction(
 ): void {
   lastAction.value =
     type === 'advance'
-      ? `+${value} 天`
+      ? t('time.lastAdvance', { n: value })
       : type === 'interaction'
-        ? `+${value} 分钟互动`
+        ? t('time.lastInteraction', { n: value })
         : type === 'absence'
-          ? `模拟离开 ${value} 天`
-          : '生命已重置';
+          ? t('time.lastAbsence', { n: value })
+          : t('time.lastReset');
   emitTauri('time-control', { type, value });
 }
 
@@ -171,7 +174,7 @@ watch(() => [s.topmost, s.clickthrough], () => {
     try {
       await invoke('apply_settings', flags);
       windowError.value = '';
-    } catch (error) { windowError.value = `窗口设置未生效：${String(error)}`; }
+    } catch (error) { windowError.value = t('behavior.windowError', { e: String(error) }); }
   });
 }, { immediate: true });
 
@@ -208,6 +211,13 @@ function swatchColor(body: [number, number, number]): string {
   return `rgb(${body.map((c) => Math.round(c * 255)).join(',')})`;
 }
 
+/** 色点用「核白→主体→深晕」径向渐变预览，贴近粒子实际加法发光的观感。 */
+function swatchStyle(theme: ColorTheme): Record<string, string> {
+  return {
+    background: `radial-gradient(circle at 50% 44%, ${swatchColor(theme.core)} 0%, ${swatchColor(theme.body)} 46%, ${swatchColor(theme.aura)} 100%)`,
+  };
+}
+
 /** 滑条已滑过比例 0–100%，驱动填充色。 */
 function sliderFill(value: number, min: number, max: number): Record<string, string> {
   const pct = ((value - min) / (max - min)) * 100;
@@ -219,6 +229,16 @@ onMounted(() => {
     vnow.value = c.vnow;
     currentScale.value = c.scale;
     growthInfo.value = c.growth;
+  });
+  // 语言在设置窗（独立 WebView）里切换：同步到托盘/设置窗标题与主窗界面。
+  if (isDesktop) {
+    void invoke('set_ui_locale', { locale: locale.value }).catch(() => {});
+    watch(locale, (loc) => {
+      void invoke('set_ui_locale', { locale: loc }).catch(() => {});
+    });
+  }
+  watch(localeMode, (mode) => {
+    emitTauri('ui-locale-changed', mode);
   });
 });
 
@@ -232,33 +252,56 @@ onBeforeUnmount(() => {
   <div class="page" :class="themeClass">
     <header class="top">
       <div class="top-copy">
-        <h1>设置</h1>
+        <h1>{{ t('settings.title') }}</h1>
         <p class="eyebrow">Emerge · Particle Life</p>
-      </div>
-      <div class="top-actions">
-        <div class="segmented" role="group" aria-label="界面主题">
-          <button
-            v-for="opt in themeOptions"
-            :key="opt.id"
-            type="button"
-            class="seg"
-            :class="{ on: themeMode === opt.id }"
-            :aria-pressed="themeMode === opt.id"
-            @click="setTheme(opt.id)"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-        <button type="button" class="btn-text" @click="reset">恢复默认</button>
       </div>
     </header>
 
+    <section class="card" aria-labelledby="general-title">
+      <h2 id="general-title">{{ t('section.general') }}</h2>
+      <div class="top-actions">
+        <div class="general-row">
+          <span>{{ t('lang.label') }}</span>
+          <div class="segmented" role="group" :aria-label="t('lang.label')">
+            <button
+              v-for="opt in langOptions"
+              :key="opt.id"
+              type="button"
+              class="seg"
+              :class="{ on: localeMode === opt.id }"
+              :aria-pressed="localeMode === opt.id"
+              @click="setLang(opt.id)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <div class="general-row">
+          <span>{{ t('theme.label') }}</span>
+          <div class="segmented" role="group" :aria-label="t('theme.label')">
+            <button
+              v-for="opt in themeOptions"
+              :key="opt.id"
+              type="button"
+              class="seg"
+              :class="{ on: themeMode === opt.id }"
+              :aria-pressed="themeMode === opt.id"
+              @click="setTheme(opt.id)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+        <button type="button" class="btn-text" @click="reset">{{ t('settings.reset') }}</button>
+      </div>
+    </section>
+
     <section class="card">
-      <h2>外观</h2>
+      <h2>{{ t('section.appearance') }}</h2>
 
       <div class="field">
         <div class="label-row">
-          <label for="slider-body">粒子团大小</label>
+          <label for="slider-body">{{ t('appearance.bodySize') }}</label>
           <strong class="value-text">{{ bodyScalePct }}%</strong>
         </div>
         <input
@@ -275,7 +318,7 @@ onBeforeUnmount(() => {
 
       <div class="field">
         <div class="label-row">
-          <label for="slider-brightness">亮度</label>
+          <label for="slider-brightness">{{ t('appearance.brightness') }}</label>
           <strong class="value-text">{{ brightnessPct }}%</strong>
         </div>
         <input
@@ -292,7 +335,7 @@ onBeforeUnmount(() => {
 
       <div class="field">
         <div class="label-row">
-          <label for="slider-point">粒子点大小</label>
+          <label for="slider-point">{{ t('appearance.pointSize') }}</label>
           <strong class="value-text">{{ pointScalePct }}%</strong>
         </div>
         <input
@@ -309,27 +352,27 @@ onBeforeUnmount(() => {
 
       <div class="field">
         <div class="label-row">
-          <span id="swatch-label">配色</span>
+          <span id="swatch-label">{{ t('appearance.palette') }}</span>
         </div>
         <div class="swatches" role="listbox" aria-labelledby="swatch-label">
           <button
-            v-for="t in COLOR_THEMES"
-            :key="t.id"
+            v-for="theme in COLOR_THEMES"
+            :key="theme.id"
             type="button"
             class="swatch"
-            :class="{ on: s.theme === t.id }"
-            :title="t.name"
-            :aria-label="t.name"
-            :aria-selected="s.theme === t.id"
-            :style="{ background: swatchColor(t.body) }"
-            @click="s.theme = t.id"
+            :class="{ on: s.theme === theme.id }"
+            :title="t(`theme.${theme.id}`)"
+            :aria-label="t(`theme.${theme.id}`)"
+            :aria-selected="s.theme === theme.id"
+            :style="swatchStyle(theme)"
+            @click="s.theme = theme.id"
           />
           <button
             type="button"
             class="swatch custom"
             :class="{ on: s.theme === 'custom' }"
-            title="自定义色相"
-            aria-label="自定义色相"
+            :title="t('palette.custom')"
+            :aria-label="t('palette.custom')"
             :aria-selected="s.theme === 'custom'"
             @click="s.theme = 'custom'"
           >
@@ -340,7 +383,7 @@ onBeforeUnmount(() => {
 
       <div v-if="s.theme === 'custom'" class="field">
         <div class="label-row">
-          <label for="slider-hue">色相</label>
+          <label for="slider-hue">{{ t('appearance.hue') }}</label>
           <strong class="value-text">{{ hueDeg }}°</strong>
         </div>
         <input
@@ -356,60 +399,60 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="card">
-      <h2>行为</h2>
+      <h2>{{ t('section.behavior') }}</h2>
       <p v-if="windowError" role="alert" class="note error">
         <span aria-hidden="true">⚠</span> {{ windowError }}
       </p>
 
       <div class="toggle-row">
         <div class="toggle-copy">
-          <strong>置顶显示</strong>
-          <em>生命体保持在其它窗口之上</em>
+          <strong>{{ t('behavior.topmost') }}</strong>
+          <em>{{ t('behavior.topmostDesc') }}</em>
         </div>
         <input
           id="toggle-topmost"
           v-model="s.topmost"
           type="checkbox"
           class="switch"
-          aria-label="置顶显示"
+          :aria-label="t('behavior.topmost')"
         />
       </div>
 
       <div class="toggle-row">
         <div class="toggle-copy">
-          <strong>鼠标穿透</strong>
-          <em>开启后点击直达桌面；关闭后全屏透明主窗口接收点击</em>
+          <strong>{{ t('behavior.clickthrough') }}</strong>
+          <em>{{ t('behavior.clickthroughDesc') }}</em>
         </div>
         <input
           id="toggle-clickthrough"
           v-model="s.clickthrough"
           type="checkbox"
           class="switch"
-          aria-label="鼠标穿透"
+          :aria-label="t('behavior.clickthrough')"
         />
       </div>
 
-      <p class="note plain">设置打开时，粒子层临时穿透且暂停鼠标响应；关闭设置后恢复此开关的选择。</p>
+      <p class="note plain">{{ t('behavior.note') }}</p>
     </section>
 
     <section class="card">
-      <h2>桌面位置</h2>
-      <div class="placement-map" tabindex="0" role="group" aria-label="桌面位置预览，拖动或使用方向键移动"
+      <h2>{{ t('section.position') }}</h2>
+      <div class="placement-map" tabindex="0" role="group" :aria-label="t('section.position')"
         :style="{ aspectRatio: `${screenWidth} / ${screenHeight}` }"
         @pointerdown="startPlacement" @pointermove="movePlacement"
         @pointerup="placing = false" @pointercancel="placing = false" @lostpointercapture="placing = false"
         @keydown="keyPlacement">
-        <span class="screen-label">桌面</span>
+        <span class="screen-label">{{ t('position.desktop') }}</span>
         <span class="placement-marker" :style="{ left: `${s.positionX * 100}%`, top: `${s.positionY * 100}%` }">✦</span>
       </div>
       <div class="placement-meta">
-        <p class="note plain">拖动光点摆放，松手后固定停留；也可用方向键微调。</p>
+        <p class="note plain">{{ t('position.hint') }}</p>
         <p class="coord" aria-live="polite">{{ Math.round(s.positionX * 100) }}% · {{ Math.round(s.positionY * 100) }}%</p>
       </div>
     </section>
 
     <section class="card">
-      <h2>成长</h2>
+      <h2>{{ t('section.growth') }}</h2>
 
       <template v-if="growthInfo">
         <div class="growth-head">
@@ -419,8 +462,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="growth-meta">
             <p class="growth-sub">
-              {{ Math.floor(growthInfo.companionMinutes) }} 分钟陪伴 ·
-              {{ growthInfo.days }} 个使用日
+              {{ t('growth.sub', { m: Math.floor(growthInfo.companionMinutes), d: growthInfo.days }) }}
             </p>
             <p v-if="growthInfo.lifeId" class="life-id">{{ growthInfo.lifeId }}</p>
           </div>
@@ -428,7 +470,7 @@ onBeforeUnmount(() => {
         <div
           class="growth-progress"
           role="progressbar"
-          aria-label="成长度"
+          :aria-label="t('section.growth')"
           aria-valuemin="0"
           aria-valuemax="100"
           :aria-valuenow="Math.round(growthInfo.growth * 100)"
@@ -438,26 +480,26 @@ onBeforeUnmount(() => {
 
         <div class="stat-grid">
           <div class="stat">
-            <span class="stat-label">陪伴</span>
-            <strong>{{ Math.floor(growthInfo.companionMinutes) }} 分钟</strong>
+            <span class="stat-label">{{ t('growth.companion') }}</span>
+            <strong>{{ Math.floor(growthInfo.companionMinutes) }} {{ t('unit.minutes') }}</strong>
           </div>
           <div class="stat">
-            <span class="stat-label">使用日</span>
-            <strong>{{ growthInfo.days }} 天</strong>
+            <span class="stat-label">{{ t('growth.days') }}</span>
+            <strong>{{ growthInfo.days }} {{ t('unit.days') }}</strong>
           </div>
           <div class="stat">
-            <span class="stat-label">温和互动</span>
-            <strong>{{ growthInfo.interactionMinutes.toFixed(1) }} 分钟</strong>
+            <span class="stat-label">{{ t('growth.interaction') }}</span>
+            <strong>{{ growthInfo.interactionMinutes.toFixed(1) }} {{ t('unit.minutes') }}</strong>
           </div>
           <div class="stat">
-            <span class="stat-label">有效音乐</span>
-            <strong>{{ growthInfo.musicMinutes.toFixed(1) }} 分钟</strong>
+            <span class="stat-label">{{ t('growth.music') }}</span>
+            <strong>{{ growthInfo.musicMinutes.toFixed(1) }} {{ t('unit.minutes') }}</strong>
           </div>
         </div>
       </template>
-      <p v-else class="note plain">等待生命体同步成长记录…</p>
+      <p v-else class="note plain">{{ t('growth.waiting') }}</p>
 
-      <div class="stage-path" aria-label="成长阶段">
+      <div class="stage-path" :aria-label="t('section.growth')">
         <div
           v-for="(st, i) in STAGES"
           :key="st.id"
@@ -480,25 +522,22 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="card">
-      <h2>怎么积累</h2>
+      <h2>{{ t('section.paths') }}</h2>
       <ul class="path-list">
         <li v-for="p in PATHS" :key="p.name">
           <strong>{{ p.name }}</strong>
           <span>{{ p.desc }}</span>
         </li>
       </ul>
-      <p class="note plain">
-        成长度由三条路径共同推进，只进不退。DNA 只影响成长速度，不限制最终上限。
-        每日递减后仍会继续累计，只是变慢。
-      </p>
+      <p class="note plain">{{ t('paths.note') }}</p>
     </section>
 
     <section v-if="timeUnlocked" class="card time-card">
-      <h2>时间加速</h2>
+      <h2>{{ t('section.time') }}</h2>
 
       <div class="field">
         <div class="label-row">
-          <span>虚拟时间</span>
+          <span>{{ t('time.virtual') }}</span>
           <span class="vnow" aria-live="polite">{{ vnow }}（×{{ currentScale }}）</span>
         </div>
         <div class="pills">
@@ -517,35 +556,35 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="pills actions">
-        <button type="button" class="pill" @click="timeAction('advance', 1)">+1 天</button>
+        <button type="button" class="pill" @click="timeAction('advance', 1)">{{ t('time.advance1') }}</button>
         <button type="button" class="pill" @click="timeAction('interaction', 60)">
-          +60 分钟互动
+          {{ t('time.interaction60') }}
         </button>
         <button type="button" class="pill" @click="timeAction('absence', 3)">
-          模拟离开 3 天
+          {{ t('time.absence3') }}
         </button>
         <button
           type="button"
           class="pill danger"
           :class="{ armed: confirmReset }"
-          :title="confirmReset ? undefined : '清空成长记录，重新开始'"
+          :title="confirmReset ? undefined : t('time.resetTitle')"
           @click="onResetLife"
         >
-          {{ confirmReset ? '确认重置生命？' : '重置生命' }}
+          {{ confirmReset ? t('time.resetConfirm') : t('time.reset') }}
         </button>
       </div>
       <p v-if="lastAction" role="status" class="note ok">{{ lastAction }} ✓</p>
-      <p v-else class="note plain">用于快速观察成长、昼夜与离线回归。</p>
+      <p v-else class="note plain">{{ t('time.hint') }}</p>
     </section>
 
     <p
       class="footer-hint"
       :class="{ lit: titleLit }"
       :style="titleLit ? { opacity: 0.7 + titleLit * 0.05 } : undefined"
-      title="连点 5 次解锁时间加速"
+      :title="t('footer.title')"
       @click="onSecretTap"
     >
-      关闭本窗口不会退出应用 · 托盘菜单仍可控制
+      {{ t('footer.hint') }}
     </p>
   </div>
 </template>
@@ -666,9 +705,20 @@ onBeforeUnmount(() => {
 .top-actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.general-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
-  flex: 0 0 auto;
+}
+
+.top-actions > .btn-text {
+  align-self: flex-end;
 }
 
 .eyebrow {
@@ -1087,8 +1137,11 @@ h2 {
 .stage-legend li,
 .path-list li {
   display: grid;
-  grid-template-columns: 52px 1fr;
-  gap: 10px;
+  /* 固定列宽：所有说明文字左对齐（auto 会按行内最长名称各自缩进）；
+     96px 足够容纳 "Conscious" / "Gentle play" 等最长名称 */
+  grid-template-columns: 96px 1fr;
+  column-gap: 12px;
+  align-items: baseline;
   padding: 8px 0;
   border-top: 1px solid var(--border-subtle);
   font-size: 13px;
@@ -1105,15 +1158,12 @@ h2 {
 .path-list strong {
   font-weight: 500;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .stage-legend span,
 .path-list span {
   color: var(--text-secondary);
-}
-
-.path-list li {
-  grid-template-columns: 56px 1fr;
 }
 
 /* ===== 时间加速（隐藏功能卡：样式与普通卡片一致，克制装饰） ===== */

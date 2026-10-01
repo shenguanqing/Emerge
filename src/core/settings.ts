@@ -15,10 +15,10 @@ export interface ColorTheme {
 export const COLOR_THEMES: ColorTheme[] = [
   {
     id: 'gold',
-    name: '金',
-    core: [1.0, 0.95, 0.82],
-    body: [0.88, 0.68, 0.32],
-    aura: [0.58, 0.42, 0.18],
+    name: '贾维斯金橙',
+    core: [1.0, 0.9, 0.58],
+    body: [1.0, 0.48, 0.055],
+    aura: [0.66, 0.22, 0.025],
   },
   {
     id: 'terracotta',
@@ -36,10 +36,10 @@ export const COLOR_THEMES: ColorTheme[] = [
   },
   {
     id: 'mist',
-    name: '雾蓝',
-    core: [0.9, 0.94, 0.98],
-    body: [0.42, 0.55, 0.7],
-    aura: [0.24, 0.34, 0.48],
+    name: '心灵青蓝',
+    core: [0.76, 1.0, 1.0],
+    body: [0.025, 0.72, 1.0],
+    aura: [0.01, 0.22, 0.55],
   },
   {
     id: 'mauve',

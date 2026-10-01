@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { generateDNAFromSeed, mulberry32 } from './DNAEngine';
 import { MemoryEngine, createMemoryState, dayKey } from './MemoryEngine';
-import { GrowthEngine } from './GrowthEngine';
+import { GrowthEngine, formStage, formStructure } from './GrowthEngine';
 import {
   MemoryStorage,
   loadLife,
@@ -106,6 +106,35 @@ test('成长：互动与天数单调推进且封顶', () => {
   }
   assert.ok(g.state.growth <= 1);
   assert.equal(typeof g.state.stage, 'string');
+});
+
+test('四形态：阶段阈值与结构复杂度单调递增', () => {
+  assert.equal(formStage(0.2), 'origin');
+  assert.equal(formStage(0.45), 'awaken');
+  assert.equal(formStage(0.7), 'conscious');
+  assert.equal(formStage(0.95), 'emerge');
+
+  const o = formStructure(0.2);
+  const a = formStructure(0.45);
+  const c = formStructure(0.7);
+  const e = formStructure(1.0);
+  // 同一母体：轨道/神经/碎片/弧流随成长变复杂，Origin 最简。
+  assert.ok(o.orbitCount < a.orbitCount && a.orbitCount < c.orbitCount && c.orbitCount < e.orbitCount);
+  assert.ok(o.orbitCount <= 6);
+  assert.ok(a.orbitCount >= 5 && a.orbitCount <= 12);
+  assert.ok(c.orbitCount >= 8 && c.orbitCount <= 12);
+  assert.ok(e.orbitCount >= 12 && e.orbitCount <= 16);
+  assert.equal(o.neural, 0);
+  assert.ok(c.neural > 0.5 && e.neural > 0.9);
+  // 径向脉络：Awaken 起出现，Conscious 最密，Emerge 部分让位给环轨。
+  assert.equal(o.spoke, 0);
+  assert.ok(a.spoke > 0.5 && c.spoke > 0.9);
+  assert.ok(e.spoke > 0.2 && e.spoke < c.spoke);
+  assert.equal(o.streamArc, 0);
+  assert.ok(e.streamArc > 0.5);
+  assert.ok(o.coreGlow < e.coreGlow);
+  // 轨道永不封口。
+  assert.ok(formStructure(1.0).orbitBroken > 0.7);
 });
 
 test('时间：深夜睡意最强、白天最活跃', () => {
@@ -300,4 +329,49 @@ test('真实互动：停留不挂机计分，远处移动不计分，附近温�
   const before = memory.state.interactionMinutes;
   advance();
   assert.equal(memory.state.interactionMinutes, before);
+});
+
+
+import { FramePacer } from './FramePacer';
+test('帧调度：抖动帧间隔不丢累计余量，暂停不追赶', () => {
+  const pacer = new FramePacer();
+  let frames = 0;
+  for (let i = 0; i < 600; i++) if (pacer.step(i % 2 ? 0.020 : 0.013333333, 30) !== null) frames++;
+  assert.ok(frames >= 299 && frames <= 301, `实际提交 ${frames}`);
+  assert.equal(pacer.step(60, 60), null);
+  assert.equal(pacer.step(0.001, 60), null);
+  pacer.reset();
+  assert.equal(pacer.step(0.001, 30), null);
+});
+test('长期负载：成熟不阻止降档，音乐闲置不降至 15fps', () => {
+  const q = new QualityManager();
+  for (let i = 0; i < 80; i++) q.sample(10, 120, 0.5, 1, true);
+  assert.equal(q.targetFps, 30);
+  assert.equal(q.tier, 'low');
+  q.sample(30, 120, 0.5, 1, false);
+  assert.equal(q.targetFps, 15);
+  q.sample(30, 0, 0.5, 1, false);
+  assert.equal(q.targetFps, 60);
+});
+
+import { cssToWorldOnViewPlane, DEFAULT_CAMERA } from '../render/ViewState';
+test('指针投影：默认相机中心落在原点，边缘与旧公式一致', () => {
+  const cam = { ...DEFAULT_CAMERA };
+  const center = cssToWorldOnViewPlane(cam, 640, 360, 1280, 720);
+  assert.ok(Math.abs(center[0]) < 1e-9 && Math.abs(center[1]) < 1e-9 && Math.abs(center[2]) < 1e-9, `中心 ${center}`);
+  // fov 50°、距离 7 的 z=0 平面：右缘 x = tan(25°)*7*aspect
+  const halfH = Math.tan((50 * Math.PI) / 180 / 2) * 7;
+  const halfW = halfH * (1280 / 720);
+  const right = cssToWorldOnViewPlane(cam, 1280, 360, 1280, 720);
+  assert.ok(Math.abs(right[0] - halfW) < 1e-6, `右缘 x=${right[0]} 期望 ${halfW}`);
+  assert.ok(Math.abs(right[1]) < 1e-6 && Math.abs(right[2]) < 1e-6);
+  // 旋转相机后中心仍映射到 target（默认原点）
+  const orbited = cssToWorldOnViewPlane({ azimuth: 0.9, elevation: 0.4, distance: 5, target: [0, 0, 0] }, 640, 360, 1280, 720);
+  assert.ok(Math.hypot(...orbited) < 1e-6, `旋转中心 ${orbited}`);
+  // 桌面摆位（非原点）时，屏幕中心映射到 target 而非原点
+  const home = cssToWorldOnViewPlane(
+    { azimuth: 0.2, elevation: 0.1, distance: 5.4, target: [2.4, -1.8, 0] },
+    640, 360, 1280, 720,
+  );
+  assert.ok(Math.hypot(home[0] - 2.4, home[1] + 1.8, home[2]) < 1e-6, `摆位中心 ${home}`);
 });

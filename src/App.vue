@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import {
   DEFAULT_LIFE_PARAMS,
   DEFAULT_SIMULATION_PARAMS,
 } from './core/types';
+import { FramePacer } from './core/FramePacer';
 import { LifeEngine } from './core/LifeEngine';
 import { WebGL2Backend } from './render/backends/webgl2/WebGL2Backend';
 import { WebGPUBackend } from './render/backends/webgpu/WebGPUBackend';
@@ -13,12 +14,15 @@ import { QUALITY_TIERS, qualityAppearance, QualityManager, type QualityTier } fr
 import { applyDNA, generateDNA, type LifeDNA } from './core/DNAEngine';
 import { MemoryEngine, createMemoryState } from './core/MemoryEngine';
 import { GrowthEngine } from './core/GrowthEngine';
-import { clearLife, defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
+import { clearLife, defaultStorage, loadLife, saveLife, SCHEMA_VERSION, MemoryStorage, STORAGE_KEY } from './core/LifeStorage';
 import { LifeClock } from './core/LifeClock';
 import DebugPanel from './ui/DebugPanel.vue';
 import MusicControl from './ui/MusicControl.vue';
+import Observatory from './ui/Observatory.vue';
 import type { MusicFeatures } from './input/AudioSystem';
 import Diagnostics from './ui/Diagnostics.vue';
+import { DEFAULT_CAMERA, worldToCssOnViewPlane, type OrbitCamera } from './render/ViewState';
+import { setLocaleMode, stageDisplayName, t, locale, type LocaleMode } from './i18n';
 import { invoke, listenNative } from './platform/desktop';
 import {
   loadSettings,
@@ -30,13 +34,15 @@ import {
 
 const isDesktop = '__TAURI_INTERNALS__' in window;
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+/** 画布代数：WebGPU 失败回退 WebGL2 时 +1，让 Vue 换新 canvas（旧 canvas 不能再取 WebGL context）。 */
+const canvasEpoch = ref(0);
 const diag = reactive({
   backend: '探测中…',
   note: '',
   fps: 0,
   particles: DEFAULT_LIFE_PARAMS.particleCount,
   dpr: 1,
-  mood: '平静',
+  mood: 'calm',
   quality: 'high',
   targetFps: 60,
   life: '',
@@ -44,6 +50,82 @@ const diag = reactive({
 
 const quality = new QualityManager();
 const debugMode = ref(false);
+
+/** 观察空间：双击进入，拖动旋转 / 滚轮缩放。 */
+const observatoryOpen = ref(false);
+const observatoryInsets = ref({ top: isDesktop ? 48 : 0, right: 0, bottom: 0, left: 0 });
+const observatoryCamera = ref<OrbitCamera>({ ...DEFAULT_CAMERA, distance: 5.4 });
+const observatory = reactive({
+  state: null as ReturnType<LifeEngine['getState']> | null,
+  growth: null as ReturnType<LifeEngine['getGrowthSummary']> | null,
+  dna: null as Pick<LifeDNA, 'id' | 'symmetry' | 'curiosityBase' | 'energyBase' | 'growthBias' | 'orbitBias'> | null,
+});
+let observatorySyncAt = 0;
+
+function applyOrbitView(cam: OrbitCamera): void {
+  backend?.setView(cam);
+  pointer?.setCamera(cam);
+  if (pointer) pointer.lastActivity = performance.now();
+}
+
+function openObservatory(): void {
+  observatoryOpen.value = true;
+  if (isDesktop) {
+    void invoke<{ top: number; right: number; bottom: number; left: number }>('desktop_content_insets')
+      .then((insets) => { observatoryInsets.value = insets; })
+      .catch((error) => { diag.note = String(error); });
+  }
+  pointer?.clearGestures();
+  pointer?.ingest(0, 0, false);
+  // 相机环绕当前核心，避免桌面摆位后主体跑出画面；略微拉近便于看清结构。
+  const core = engine?.getState().corePosition ?? [0, 0, 0];
+  observatoryCamera.value = {
+    ...DEFAULT_CAMERA,
+    distance: 5.4,
+    target: [core[0], core[1], core[2]],
+  };
+  applyOrbitView({ ...observatoryCamera.value });
+  if (isDesktop) {
+    // 观察空间需要点到侧栏，临时关掉穿透。
+    void invoke('set_observatory_open', { open: true }).catch((error) => { diag.note = String(error); });
+  }
+}
+
+function closeObservatory(): void {
+  observatoryOpen.value = false;
+  pointer?.clearGestures();
+  applyOrbitView({ ...DEFAULT_CAMERA });
+  if (isDesktop) {
+    void invoke('set_observatory_open', { open: false }).catch((error) => { diag.note = String(error); });
+  }
+}
+
+/** 双击是否落在粒子团上：核心投影到屏幕，与实体包络半径比较（含呼吸、44px 手指余量）。 */
+function doubleClickOnEntity(cssX: number, cssY: number): boolean {
+  const canvas = canvasRef.value;
+  if (!canvas || !engine) return false;
+  const state = engine.getState();
+  const core = state.corePosition;
+  const { x, y, worldPerPx } = worldToCssOnViewPlane(
+    DEFAULT_CAMERA,
+    [core[0], core[1], core[2]],
+    canvas.clientWidth,
+    canvas.clientHeight,
+  );
+  // 主体 ≈1.2×bodyBase，弧流/碎片外缘放宽到 1.6×bodyBase×呼吸。
+  const radiusWorld = 1.6 * 0.85 * visual.bodyScale * state.breathScale;
+  const radiusCss = Math.max(radiusWorld / worldPerPx, 44);
+  return Math.hypot(cssX - x, cssY - y) <= radiusCss;
+}
+
+/** 接收窗口事件时保留原生 DOM 双击；穿透时仍走全局指针通道。 */
+function onCanvasDoubleClick(event: MouseEvent): void {
+  if (observatoryOpen.value) return;
+  const rect = canvasRef.value?.getBoundingClientRect();
+  if (rect && doubleClickOnEntity(event.clientX - rect.left, event.clientY - rect.top)) {
+    openObservatory();
+  }
+}
 
 let musicFeatures: MusicFeatures | null = null;
 function onMusic(f: unknown): void {
@@ -53,16 +135,21 @@ function onMusic(f: unknown): void {
 
 type Backend = WebGL2Backend | WebGPUBackend;
 
+let unmounted = false;
 let engine: LifeEngine | null = null;
 let backend: Backend | null = null;
 let pointer: PointerSystem | null = null;
 let unlistenGlobal: (() => void) | null = null;
 let unlistenLock: (() => void) | null = null;
+let unlistenLocale: (() => void) | null = null;
 let unlistenVisual: (() => void) | null = null;
 let unlistenVisibility: (() => void) | null = null;
+let unlistenCloseObs: (() => void) | null = null;
+let unlistenOpenObs: (() => void) | null = null;
 let desktopVisible = true;
 let unlistenDebug: (() => void) | null = null;
 let clockTimer = 0;
+let cleanupSave: (() => void) | null = null;
 
 /** 向设置窗推送虚拟时间（解锁后展示）。 */
 function broadcastClock(): void {
@@ -136,7 +223,14 @@ function applyTier(tier: QualityTier): void {
 }
 
 onMounted(async () => {
-  const canvas = canvasRef.value;
+  // 界面语言同步到 Rust：托盘菜单与设置窗标题按 locale 重建。
+  if (isDesktop) {
+    void invoke('set_ui_locale', { locale: locale.value }).catch(() => {});
+    watch(locale, (loc) => {
+      void invoke('set_ui_locale', { locale: loc }).catch(() => {});
+    });
+  }
+  let canvas = canvasRef.value;
   if (!canvas) return;
 
   // 设置面板持久化：团大小 / 颜色 / 亮度 / 点大小 / 行为开关。
@@ -146,7 +240,7 @@ onMounted(async () => {
   const urlParams = new URLSearchParams(window.location.search);
   if (isDesktop) {
     try { await invoke('apply_settings', { topmost: saved.topmost, clickthrough: saved.clickthrough }); }
-    catch (error) { diag.note = `窗口设置恢复失败：${String(error)}`; }
+    catch (error) { diag.note = t('note.windowRestore', { e: String(error) }); }
   }
   visual = {
     bodyScale: saved.bodyScale,
@@ -172,7 +266,14 @@ onMounted(async () => {
   document.documentElement.classList.toggle('desktop-transparent', isDesktop);
 
   // ---- 生命存档：DNA 永久保存，记忆与年龄跨会话累积 ----
-  const storage = defaultStorage();
+  // 视觉/时间预览使用存档副本，避免测试形态写回真实成长记录。
+  const persistedStorage = defaultStorage();
+  const preview = ['growth', 'age', 'offline', 'timelapse'].some((key) => urlParams.has(key));
+  const storage = preview ? new MemoryStorage() : persistedStorage;
+  if (preview) {
+    const savedLife = persistedStorage.getItem(STORAGE_KEY);
+    if (savedLife) storage.setItem(STORAGE_KEY, savedLife);
+  }
   const nowDate = new Date();
   const timelapse = Math.max(Number(urlParams.get('timelapse') ?? '1') || 1, 1);
   debugMode.value = urlParams.get('debug') === '1';
@@ -183,7 +284,7 @@ onMounted(async () => {
   let growth: GrowthEngine;
   let offlineMinutes = 0;
   // 重置守卫：清档后旧页面卸载时的自动存档可能写回旧数据，这里再次清除。
-  const resetting = sessionStorage.getItem('emerge.reset') === '1';
+  const resetting = !preview && sessionStorage.getItem('emerge.reset') === '1';
   if (resetting) {
     clearLife(storage);
     sessionStorage.removeItem('emerge.reset');
@@ -242,6 +343,14 @@ onMounted(async () => {
   applyDNA(dna, params, simParams);
   diag.life = `${dna.id} · ${growth.state.stage}`;
   diag.particles = Math.round(params.particleCount * growth.state.particleMul);
+  observatory.dna = {
+    id: dna.id,
+    symmetry: dna.symmetry,
+    curiosityBase: dna.curiosityBase,
+    energyBase: dna.energyBase,
+    growthBias: dna.growthBias,
+    orbitBias: dna.orbitBias,
+  };
   void storage;
 
   const caps = await probeCapabilities();
@@ -263,6 +372,44 @@ onMounted(async () => {
   if (offlineParam > 0) engine.wakeFromOffline(offlineParam);
   else if (offlineMinutes >= 10) engine.wakeFromOffline(offlineMinutes);
   (window as typeof window & { __emergeClock?: LifeClock }).__emergeClock = clock;
+  // 诊断/端到端验证出口：观察空间开关状态与双击命中判定。
+  (window as typeof window & {
+    __emergeDebug?: {
+      observatoryOpen(): boolean;
+      hitEntity(cssX: number, cssY: number): boolean;
+      core(): number[] | null;
+      bodyScale(): number;
+      hitDebug(cssX: number, cssY: number): Record<string, number | boolean | null | undefined>;
+    };
+  }).__emergeDebug = {
+    observatoryOpen: () => observatoryOpen.value,
+    hitEntity: (cssX, cssY) => doubleClickOnEntity(cssX, cssY),
+    core: () => (engine ? [...engine.getState().corePosition] : null),
+    bodyScale: () => visual.bodyScale,
+    hitDebug: (cssX, cssY) => {
+      if (!engine) return { engine: false };
+      const state = engine.getState();
+      const canvas = canvasRef.value;
+      if (!canvas) return { canvas: false };
+      const core = state.corePosition;
+      const p = worldToCssOnViewPlane(
+        DEFAULT_CAMERA,
+        [core[0], core[1], core[2]],
+        canvas.clientWidth,
+        canvas.clientHeight,
+      );
+      const radiusWorld = 1.6 * 0.85 * visual.bodyScale * state.breathScale;
+      return {
+        px: p.x,
+        py: p.y,
+        wpp: p.worldPerPx,
+        breath: state.breathScale,
+        radiusCss: Math.max(radiusWorld / p.worldPerPx, 44),
+        dist: Math.hypot(cssX - p.x, cssY - p.y),
+        hit: doubleClickOnEntity(cssX, cssY),
+      };
+    },
+  };
   if (isDesktop) {
     clockTimer = window.setInterval(broadcastClock, 1000);
     broadcastClock();
@@ -271,6 +418,13 @@ onMounted(async () => {
   pointer = new PointerSystem();
   if (isDesktop) {
     unlistenVisibility = await listenNative<boolean>('life-visibility', (visible) => { desktopVisible = visible; });
+    unlistenOpenObs = await listenNative<unknown>('open-observatory', () => {
+      if (!observatoryOpen.value) openObservatory();
+    });
+    // 设置窗打开时退出观察空间，避免遮罩盖住设置。
+    unlistenCloseObs = await listenNative<unknown>('close-observatory', () => {
+      if (observatoryOpen.value) closeObservatory();
+    });
     // 桌面统一走全局指针（含按下/抬起），穿透与否反应一致。
     unlistenGlobal = await listenNative<{
       x: number;
@@ -279,7 +433,7 @@ onMounted(async () => {
       kind: 'move' | 'down' | 'up';
     }>('global-pointer', (p) => {
       const ptr = pointer;
-      if (!ptr) return;
+      if (!ptr || observatoryOpen.value) return;
       if (p.kind === 'down' && p.near) ptr.press(p.x, p.y, true);
       else if (p.kind === 'up') ptr.release();
       else ptr.ingest(p.x, p.y, p.near);
@@ -287,6 +441,11 @@ onMounted(async () => {
     unlistenLock = await listenNative<{ x: number; y: number }>('desktop-position', (position) => {
       placement = { x: normalizePosition(position.x), y: normalizePosition(position.y) };
       applyPlacement();
+    });
+    // 语言在设置窗（独立 WebView）里切换时，主窗界面同步换语言；
+    // 托盘重建由 App 自己的 locale watcher 走 set_ui_locale（幂等）。
+    unlistenLocale = await listenNative<LocaleMode>('ui-locale-changed', (mode) => {
+      setLocaleMode(mode);
     });
     // 设置面板视觉参数
     unlistenVisual = await listenNative<VisualSettings & {
@@ -336,13 +495,24 @@ onMounted(async () => {
   try {
     if (backendId === 'webgpu') {
       active = await WebGPUBackend.create(canvas, params, simParams, isDesktop);
-      if (!active) diag.note = 'WebGPU 初始化失败，尝试回退 WebGL2';
+      if (!active) diag.note = t('note.webgpuFallback');
     }
     if (!active && caps.webgl2.available) {
+      // 获取过 WebGPU context 的 canvas 不能再获取 WebGL context。
+      // 用 :key 让 Vue 换新画布：手动 replaceWith 会让模板 ref 在下次重渲染时
+      // 被重新绑回已游离的旧节点（画布尺寸读 0，双击命中等全部失效）。
+      if (backendId === 'webgpu') {
+        canvasEpoch.value += 1;
+        await nextTick();
+        const next = canvasRef.value;
+        if (!next) throw new Error('WebGL2 回退画布未就绪');
+        canvas = next;
+        if (!isDesktop) { pointer.detach(); pointer.attach(next); }
+      }
       active = new WebGL2Backend(canvas, params, simParams, isDesktop);
     }
   } catch (err) {
-    diag.backend = '初始化失败';
+    diag.backend = t('note.initFailed');
     diag.note = String(err);
     return;
   }
@@ -353,7 +523,14 @@ onMounted(async () => {
 
   if (!active) {
     diag.backend = '无可用后端';
-    diag.note = 'WebGPU 与 WebGL2 均不可用，无法渲染';
+    diag.note = t('note.noBackend');
+    return;
+  }
+  if (unmounted || !pointer || !engine) {
+    active?.dispose();
+    unlistenVisibility?.(); unlistenCloseObs?.(); unlistenOpenObs?.();
+    unlistenGlobal?.(); unlistenLock?.(); unlistenLocale?.(); unlistenVisual?.(); unlistenDebug?.();
+    clearInterval(clockTimer);
     return;
   }
   backend = active;
@@ -363,8 +540,8 @@ onMounted(async () => {
   diag.backend = backend.id === 'webgpu' ? 'WebGPU Compute' : 'WebGL2 GPGPU';
   if (!diag.note) {
     diag.note = override
-      ? `强制后端 ${backend.id}；${caps.webgpu.adapter ?? ''}`
-      : `WebGPU: ${caps.webgpu.adapter ?? '不可用'}`;
+      ? t('note.forceBackend', { id: backend.id, adapter: caps.webgpu.adapter ?? '' })
+      : `WebGPU: ${caps.webgpu.adapter ?? ''}`;
   }
 
   const lifeEngine = engine;
@@ -381,18 +558,23 @@ onMounted(async () => {
   resizeObserver.observe(canvas);
 
   lastTime = performance.now();
-  let frameAcc = 0;
+  const pacer = new FramePacer();
   const loop = (now: number) => {
     rafId = requestAnimationFrame(loop);
-    const dt = Math.min((now - lastTime) / 1000, 0.1);
+    const dt = (now - lastTime) / 1000;
     lastTime = now;
+    if (document.hidden || !desktopVisible || dt > 0.25) {
+      lifeEngine.setVisible(false);
+      pacer.reset(); fpsWindow = 0; fpsFrames = 0;
+      return;
+    }
 
     // FPS：0.5s 滑动窗口平均 + 质量档位与低功耗调度。
     fpsWindow += dt;
     if (fpsWindow >= 0.5) {
       diag.fps = Math.round(fpsFrames / fpsWindow);
       const idleSeconds = (performance.now() - inputPointer.lastActivity) / 1000;
-      const q = quality.sample(diag.fps, idleSeconds, fpsWindow, lifeEngine.getState().growth);
+      const q = quality.sample(diag.fps, idleSeconds, fpsWindow, lifeEngine.getState().growth, !!musicFeatures?.active && musicFeatures.energy > 0.04);
       if (q.tierChanged) applyTier(q.tier);
       if (q.targetFpsChanged) diag.targetFps = q.targetFps;
       fpsWindow = 0;
@@ -400,17 +582,22 @@ onMounted(async () => {
       // 状态显示：连续权重的主导项，非互斥切换。
       const st = lifeEngine.getState();
       diag.mood =
-        st.scared > 0.45 ? '受惊' : st.curious > 0.45 ? '好奇' : st.contract > 0.2 ? '警觉' : '平静';
+        st.scared > 0.45 ? t('diag.mood.scared') : st.curious > 0.45 ? t('diag.mood.curious') : st.contract > 0.2 ? t('diag.mood.alert') : t('diag.mood.calm');
       const appearance = qualityAppearance(quality.tier, st.growth);
       diag.particles = appearance.count;
       activeBackend.setActiveCount(appearance.count);
       tierPointSize = appearance.pointSize;
       activeBackend.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.7));
       // 生命信息：托盘只留天数与成长；Life ID 在设置「成长」里查看。
-      const stageNames: Record<string, string> = { nascent: '初生', formed: '成形', ringed: '环生', dual: '双核' };
       const daysSeen = lifeEngine.getGrowthSummary()?.days ?? st.ageDays;
-      diag.life = `ID ${st.lifeId} · ${daysSeen}天 · ${stageNames[st.stage]} · 成长 ${Math.round(st.growth * 100)}%`;
-      const trayText = `${daysSeen}天 · ${stageNames[st.stage]} ${Math.round(st.growth * 100)}%`;
+      diag.life = t('trayLife', {
+        id: st.lifeId,
+        days: daysSeen,
+        dayWord: t('unit.days'),
+        stage: stageDisplayName(st.stage),
+        pct: Math.round(st.growth * 100),
+      });
+      const trayText = `${daysSeen}${t('unit.days')} · ${stageDisplayName(st.stage)} ${t('unit.growth')} ${Math.round(st.growth * 100)}%`;
       if (isDesktop && trayText !== lastTrayLife) {
         lastTrayLife = trayText;
         void invoke('update_life_info', { text: trayText }).catch(() => { lastTrayLife = ''; });
@@ -418,18 +605,23 @@ onMounted(async () => {
     }
 
     // 低功耗帧限制：闲置时 60→30→15，模拟步长按真实间隔保持速度一致。
-    frameAcc += dt;
-    const interval = 1 / quality.targetFps;
-    if (frameAcc + 0.0005 < interval) return;
+    const simDt = pacer.step(dt, quality.targetFps);
+    if (simDt === null) return;
     fpsFrames += 1;
-    const simDt = frameAcc;
-    frameAcc = 0;
 
     inputPointer.tick(simDt);
     lifeEngine.setPointer(inputPointer.getReading());
-    lifeEngine.setPress(inputPointer.isPressing());
+    // 观察空间里拖动只转相机，不再驱动按压吸引与涟漪。
+    lifeEngine.setPress(inputPointer.isPressing() && !observatoryOpen.value);
+    // 双击进观察空间；单击涟漪延迟 300ms，不与双击叠加。
+    // 只有双击落在粒子团上才打开；双击空白不响应（观察空间打开时双击任意处关闭）。
+    const doubleClick = inputPointer.consumeDoubleClick();
+    if (doubleClick) {
+      if (observatoryOpen.value) closeObservatory();
+      else if (doubleClickOnEntity(doubleClick.x, doubleClick.y)) openObservatory();
+    }
     const click = inputPointer.consumeClick();
-    if (click) lifeEngine.click(click.x, click.y, click.z);
+    if (click && !observatoryOpen.value) lifeEngine.click(click.x, click.y, click.z);
     if (musicFeatures) {
       // 直接引用复用对象，update 读取后再清 beat，避免丢节拍。
       lifeEngine.setMusic(musicFeatures);
@@ -437,6 +629,15 @@ onMounted(async () => {
     lifeEngine.setVisible(!document.hidden && desktopVisible);
     lifeEngine.update(simDt);
     if (musicFeatures) musicFeatures.beat = false;
+    if (observatoryOpen.value) {
+      // 5Hz 同步足够读数；每帧赋新对象会让侧栏跟着 60fps 重绘。
+      const nowMs = performance.now();
+      if (nowMs - observatorySyncAt > 200) {
+        observatorySyncAt = nowMs;
+        observatory.state = lifeEngine.getState();
+        observatory.growth = lifeEngine.getGrowthSummary();
+      }
+    }
     activeBackend.frame(lifeEngine.getState(), simDt);
   };
   rafId = requestAnimationFrame(loop);
@@ -452,20 +653,28 @@ onMounted(async () => {
   };
   save();
   const saveTimer = window.setInterval(save, 30000);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') save();
-  });
+  const onVisibility = () => { if (document.hidden) save(); };
+  document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('beforeunload', save);
-  void saveTimer;
+  cleanupSave = () => {
+    clearInterval(saveTimer);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('beforeunload', save);
+  };
 });
 
 onBeforeUnmount(() => {
+  unmounted = true;
   cancelAnimationFrame(rafId);
   clearInterval(clockTimer);
+  cleanupSave?.();
   resizeObserver?.disconnect();
   unlistenVisibility?.();
+  unlistenCloseObs?.();
+  unlistenOpenObs?.();
   unlistenGlobal?.();
   unlistenLock?.();
+  unlistenLocale?.();
   unlistenVisual?.();
   unlistenDebug?.();
   pointer?.dispose();
@@ -478,7 +687,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="stage">
-    <canvas ref="canvasRef" class="stage-canvas"></canvas>
+    <canvas :key="canvasEpoch" ref="canvasRef" class="stage-canvas" @dblclick="onCanvasDoubleClick"></canvas>
     <Diagnostics v-if="!isDesktop || debugMode"
       :backend="diag.backend"
       :note="diag.note"
@@ -490,8 +699,18 @@ onBeforeUnmount(() => {
       :target-fps="diag.targetFps"
       :life="diag.life"
     />
-    <MusicControl @features="onMusic" />
+    <MusicControl :controls-visible="observatoryOpen" @features="onMusic" />
     <DebugPanel v-if="debugMode" />
+    <Observatory
+      v-if="observatoryOpen"
+      :state="observatory.state"
+      :growth="observatory.growth"
+      :dna="observatory.dna"
+      :initial="observatoryCamera"
+      :insets="observatoryInsets"
+      @close="closeObservatory"
+      @view="applyOrbitView"
+    />
     <div v-if="debugMode && !diag.life" class="unlock-hint"></div>
   </main>
 </template>

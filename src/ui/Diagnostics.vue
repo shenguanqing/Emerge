@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { TIER_LABELS, type QualityTier } from '../core/QualityManager';
+import { t } from '../i18n';
 
 const props = defineProps<{
   backend: string;
@@ -14,18 +14,16 @@ const props = defineProps<{
   life: string;
 }>();
 
-const qualityLabel = computed(
-  () => TIER_LABELS[props.quality as QualityTier] ?? props.quality,
-);
+const qualityLabel = computed(() => t(`tier.${props.quality}`) || props.quality);
 </script>
 
 <template>
   <div class="diag" aria-live="polite">
-    <span class="chip">后端 {{ backend }}</span>
+    <span class="chip">{{ t('diag.backend') }} {{ backend }}</span>
     <span class="chip">{{ mood }}</span>
     <span v-if="life" class="chip">{{ life }}</span>
     <span class="chip">{{ fps }} FPS</span>
-    <span class="chip">{{ particles.toLocaleString() }} 粒子</span>
+    <span class="chip">{{ particles.toLocaleString() }} {{ t('diag.particles') }}</span>
     <span class="chip">{{ qualityLabel }} @ {{ targetFps }}fps</span>
     <span class="chip">DPR {{ dpr.toFixed(2) }}</span>
     <span v-if="note" class="note">{{ note }}</span>

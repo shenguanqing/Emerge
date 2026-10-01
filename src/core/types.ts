@@ -3,6 +3,7 @@
  * core 模块只依赖纯 TypeScript 数据；渲染、输入与 UI 通过该契约连接，
  * 不反向依赖 Three.js、Vue 或 DOM。
  */
+import type { FormStage, FormStructure } from './GrowthEngine';
 
 /** 生命体连续可调参数（Phase 7 起由 EmotionEngine 驱动，Phase 1 提供初始值）。 */
 export interface LifeParams {
@@ -107,6 +108,13 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
 
 /** 生命引擎每帧输出的只读快照；渲染层只消费，不回写。 */
 export interface LifeState {
+  /** 注意方向、信号传播与非固定间隔的组织/停顿节律。 */
+  focusAngle: number;
+  attention: number;
+  thoughtPhase: number;
+  thoughtPulse: number;
+  contemplation: number;
+  structureTime: number;
   /** 模拟累计时间（秒）。 */
   time: number;
   /** 呼吸相位（弧度，随时间持续累积）。 */
@@ -147,14 +155,8 @@ export interface LifeState {
   pulseBoost: number;
   /** 成长进度 0..1。 */
   growth: number;
-  /** 环结构显示量 0..1。 */
-  ring: number;
-  /** 双核心 0/1。 */
-  dualCore: number;
-  /** 旋臂数量 1..5（成长×DNA 尾迹倾向）。 */
-  arms: number;
-  /** 第二核心偏移（世界坐标）。 */
-  core2Offset: [number, number, number];
+  /** 四形态结构参数（Origin→Emerge 同一母体，复杂度递增）。 */
+  form: FormStructure;
   /** 睡眠倾向 0..1（现实时间驱动）。 */
   sleepiness: number;
   /** 环境亮度乘 0..1。 */
@@ -173,8 +175,8 @@ export interface LifeState {
   lifeId: string;
   /** 年龄（虚拟天）。 */
   ageDays: number;
-  /** 成长阶段标签。 */
-  stage: string;
+  /** 成长阶段标签：origin / awaken / conscious / emerge。 */
+  stage: FormStage;
   /** 感知到的指针位置（世界坐标，含反应延迟）。 */
   pointerPos: [number, number, number];
   /** 感知到的指针速度（世界单位/秒）。 */
@@ -185,6 +187,7 @@ export interface LifeState {
 
 export function createLifeState(): LifeState {
   return {
+    focusAngle: 0, attention: 0, thoughtPhase: 0, thoughtPulse: 0, contemplation: 0, structureTime: 0,
     time: 0,
     breathPhase: 0,
     breathScale: 1,
@@ -207,10 +210,20 @@ export function createLifeState(): LifeState {
     clickPos: [0, 0, 0],
     pulseBoost: 0,
     growth: 0,
-    ring: 0,
-    dualCore: 0,
-    arms: 1,
-    core2Offset: [0, 0, 0],
+    form: {
+      coreGlow: 0.28,
+      orbitDensity: 0,
+      orbitCount: 2,
+      orbitBroken: 1,
+      vortex: 0.22,
+      neural: 0,
+      spoke: 0,
+      membrane: 0,
+      fragment: 0,
+      streamArc: 0,
+      pulse: 0,
+      depthFade: 0.42,
+    },
     sleepiness: 0,
     brightness: 1,
     musicBass: 0,
@@ -220,7 +233,7 @@ export function createLifeState(): LifeState {
     symmetry: 0.4,
     lifeId: '',
     ageDays: 0,
-    stage: 'nascent',
+    stage: 'origin',
     pointerPos: [0, 0, 99],
     pointerVel: [0, 0, 0],
     pointerActive: 0,

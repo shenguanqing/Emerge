@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "app:build": "tauri build --debug --no-bundle",
     "app:dev": "tauri dev",
-    "test:core": "node --import tsx --test src/core/life-core.test.ts"
+    "test:core": "node --import tsx --test src/core/*.test.ts",
+    "test:audio": "node --import tsx --test src/input/audio-system.test.ts",
+    "test:input": "node --import tsx --test src/input/*.test.ts"
   },
   "dependencies": {
     "three": "^0.186.1",

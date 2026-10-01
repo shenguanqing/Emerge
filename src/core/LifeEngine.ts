@@ -3,10 +3,11 @@ import { PointerPerception, type PointerReading } from './PointerPerception';
 import { EmotionEngine } from './EmotionEngine';
 import { BehaviorEngine } from './BehaviorEngine';
 import { MemoryEngine } from './MemoryEngine';
-import { GrowthEngine } from './GrowthEngine';
+import { GrowthEngine, formStage } from './GrowthEngine';
 import { timeOfDay } from './TimeSystem';
 import { dayKey } from './MemoryEngine';
 import type { MusicFeatures } from '../input/AudioSystem';
+import { AttentionEngine } from './AttentionEngine';
 import { LifeClock } from './LifeClock';
 import type { LifeDNA } from './DNAEngine';
 
@@ -29,6 +30,7 @@ export class LifeEngine {
   private readonly perception = new PointerPerception();
   private readonly emotion: EmotionEngine;
   private readonly behavior = new BehaviorEngine();
+  private readonly attention: AttentionEngine;
   private readonly memory: MemoryEngine | null = null;
   private readonly growth: GrowthEngine | null = null;
   private readonly dna: LifeDNA | null = null;
@@ -73,6 +75,7 @@ export class LifeEngine {
 
   constructor(private readonly params: LifeParams, life?: LifeContext) {
     this.state = createLifeState();
+    this.attention = new AttentionEngine(life?.dna.seed ?? 0.5);
     this.emotion = new EmotionEngine(params.energyBase, params.curiosityBase, params.trustBase);
     this.clock = life?.clock ?? new LifeClock(1);
     if (life) {
@@ -83,8 +86,8 @@ export class LifeEngine {
       this.state.lifeId = life.dna.id;
       this.memory.beginSession(this.clock.date());
       this.state.growth = life.growth.state.growth;
-      this.state.ring = life.growth.state.ring;
-      this.state.dualCore = life.growth.state.dualCore ? 1 : 0;
+      this.state.form = { ...life.growth.state.form };
+      this.state.stage = life.growth.state.stage;
     }
   }
 
@@ -220,6 +223,13 @@ export class LifeEngine {
     this.state.moodShift = em.mood;
     this.state.pointerPushMul = behavior.pointerPushMul * (1 - (this.memory?.trustBonus ?? 0) * 0.4);
 
+    const nearAttention = this.pointerReading.active
+      ? Math.max(0, 1 - pointerDistance / (this.interactionRadius * 1.8)) : 0;
+    this.attention.update(dt, nearAttention,
+      Math.atan2(perceived.world[1] - this.state.corePosition[1], perceived.world[0] - this.state.corePosition[0]),
+      this.state.scared, this.state.sleepiness);
+    Object.assign(this.state, this.attention.state);
+
     // ---- 长按吸引与点击涟漪 ----
     const pressTarget = this.pressing && this.state.pointerActive > 0.3 ? 1 : 0;
     const pressTau = pressTarget > this.pressRamp ? 0.12 : 0.4;
@@ -294,17 +304,8 @@ export class LifeEngine {
       const g = this.growth.state;
       this.state.growth = g.growth;
       this.memory.state.growthFloor = g.growth;
-      this.state.ring = g.ring;
-      this.state.dualCore = g.dualCore ? 1 : 0;
-      this.state.arms = g.arms;
-      // 双星：第二核心绕主核心环绕，间距随成长拉开（身体被拉成双星结构）。
-      const t2 = this.state.time * 0.13;
-      const sep = 0.8; // 成熟双核在既有外包络内分化，不扩大桌面占地。
-      this.state.core2Offset = [
-        Math.sin(t2) * sep,
-        0.18 * Math.sin(t2 * 1.7) * sep,
-        Math.cos(t2 * 0.9) * sep,
-      ];
+      this.state.form = { ...g.form };
+      this.state.stage = g.stage;
     }
 
     // ---- 听音乐：Bass 身体脉冲 / Beat 核心能量波 / 高能兴奋、安静平静 ----
@@ -344,9 +345,7 @@ export class LifeEngine {
     if (this.dna) {
       this.state.ageDays = Math.max(
         0, Math.floor((this.clock.now() - this.dna.bornAt) / 86400000));
-      const g = this.state.growth;
-      this.state.stage =
-        g < 0.3 ? 'nascent' : g < 0.55 ? 'formed' : g < 0.85 ? 'ringed' : 'dual';
+      this.state.stage = formStage(this.state.growth);
     }
   }
 }

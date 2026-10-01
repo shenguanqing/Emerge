@@ -1,8 +1,12 @@
 /**
  * 成长引擎：DNA + 长期使用共同决定成长（结构变化，非换肤）。
  * 成长 0..1 连续推进；阶段只做可视化参考，不预设物种。
+ * 四形态 Origin / Awaken / Conscious / Emerge 共用粒子生命核心母体，
+ * 差别在结构复杂度（轨道、旋涡、神经网、碎片、弧流），不是四套外形。
  * core 模块纯 TypeScript，不依赖渲染器、Vue 或 DOM。
  */
+
+export type FormStage = 'origin' | 'awaken' | 'conscious' | 'emerge';
 
 export interface GrowthInputs {
   /** 陪伴天数。 */
@@ -14,26 +18,91 @@ export interface GrowthInputs {
   growthFloor?: number;
   /** DNA 成长倾向 0..1。 */
   growthBias: number;
-  /** DNA 尾迹倾向 0..1（决定旋臂数量上限）。 */
+  /** DNA 尾迹倾向 0..1（影响轨道/弧流密度）。 */
   tailProbability: number;
+}
+
+/**
+ * 形态结构参数 0..1（除 orbitCount 外），由成长度连续推导。
+ * 与 HologramField 着色器曲线保持一致，禁止在这里单独改公式。
+ */
+export interface FormStructure {
+  /** 核心亮度与半径：Origin 很小 → Emerge 极亮。 */
+  coreGlow: number;
+  /** 轨道密度 0..1（映射到轨道条数，永远不完整）。 */
+  orbitDensity: number;
+  /** 轨道条数 2..30（Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30）。 */
+  orbitCount: number;
+  /** 轨道不完整程度（始终偏高，禁止封口成圆）。 */
+  orbitBroken: number;
+  /** 内旋涡强度与数量。 */
+  vortex: number;
+  /** 神经网节点密度、连线活跃度。 */
+  neural: number;
+  /** 径向脉络：核心→外壳辐射丝（Awaken 起，Emerge 部分让位给环轨）。 */
+  spoke: number;
+  /** 粒子膜完整度（允许缺口）。 */
+  membrane: number;
+  /** 外围碎片与独立粒子群。 */
+  fragment: number;
+  /** 弧形脱离-回流（Emerge）。 */
+  streamArc: number;
+  /** 局部能量脉冲频率。 */
+  pulse: number;
+  /** 纵深衰减强度。 */
+  depthFade: number;
 }
 
 export interface GrowthState {
   /** 成长进度 0..1。 */
   growth: number;
-  /** 环结构显示量 0..1（成长后期出现的行星环）。 */
-  ring: number;
-  /** 双核心是否解锁。 */
-  dualCore: boolean;
-  /** 旋臂数量 1..5（随成长与 DNA 尾迹倾向增多）。 */
-  arms: number;
-  /** 阶段标签（可视化参考）：初生 / 成形 / 环生 / 双核。 */
-  stage: 'nascent' | 'formed' | 'ringed' | 'dual';
+  /** 阶段标签（可视化参考）：Origin / Awaken / Conscious / Emerge。 */
+  stage: FormStage;
+  /** 四形态结构参数（同一母体，复杂度递增）。 */
+  form: FormStructure;
   /** 活跃粒子乘数 0.7..1.8（随成长增多，填充变大的身体体积）。 */
   particleMul: number;
 }
 
 const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
+const smoothstep = (a: number, b: number, v: number) => {
+  const t = clamp01((v - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
+
+/** 四形态阶段阈值：与存档兼容，不随视觉改版变动。 */
+export function formStage(growth: number): FormStage {
+  if (growth < 0.3) return 'origin';
+  if (growth < 0.55) return 'awaken';
+  if (growth < 0.85) return 'conscious';
+  return 'emerge';
+}
+
+/**
+ * 由成长度推导结构参数。曲线与 HologramField GLSL 一致；
+ * tailProbability 只微调轨道/弧流上限，不改变阶段身份。
+ */
+export function formStructure(growth: number, tailProbability = 0.5): FormStructure {
+  const g = clamp01(growth);
+  const tail = clamp01(tailProbability);
+  // 轨道：2 + 28·g^1.6 → Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30。
+  const orbitDensity = Math.pow(g, 1.6);
+  const orbitCount = 3 + 11 * orbitDensity * (0.85 + 0.3 * tail);
+  return {
+    coreGlow: 0.28 + 0.72 * g,
+    orbitDensity,
+    orbitCount: Math.min(16, Math.round(orbitCount)),
+    orbitBroken: 0.72 + 0.28 * (1 - g),
+    vortex: 0.22 + 0.78 * smoothstep(0.12, 0.55, g),
+    neural: smoothstep(0.3, 0.85, g),
+    spoke: smoothstep(0.2, 0.5, g) * (1 - 0.55 * smoothstep(0.78, 1, g)),
+    membrane: smoothstep(0.18, 0.55, g),
+    fragment: smoothstep(0.5, 0.9, g),
+    streamArc: smoothstep(0.72, 0.98, g) * (0.7 + 0.3 * tail),
+    pulse: smoothstep(0.48, 0.88, g),
+    depthFade: 0.42 + 0.58 * g,
+  };
+}
 
 export class GrowthEngine {
   state: GrowthState;
@@ -59,20 +128,11 @@ export class GrowthEngine {
     const speed = 0.7 + 0.6 * clamp01(inputs.growthBias);
     const growth = clamp01(Math.max(inputs.growthFloor ?? 0, (companion + interact + music + days) * speed));
 
-    const ring = clamp01((growth - 0.55) / 0.35);
-    const dualCore = growth >= 0.85;
-    // 旋臂：成长过半后逐渐长出，数量受 DNA 尾迹倾向影响（1..5）。
-    const arms = Math.round(clamp01((growth - 0.4) / 0.45) * (1 + inputs.tailProbability * 3)) + 1;
-    const stage =
-      growth < 0.3 ? 'nascent' : growth < 0.55 ? 'formed' : growth < 0.85 ? 'ringed' : 'dual';
-
     return {
       growth,
-      ring,
-      dualCore,
-      arms,
-      stage,
-      // 成长后体积（环/双核/旋臂）变大，粒子要跟上否则发稀。
+      stage: formStage(growth),
+      form: formStructure(growth, inputs.tailProbability),
+      // 成长后体积（轨道/神经网/碎片）变大，粒子要跟上否则发稀。
       particleMul: 0.7 + 1.1 * growth,
     };
   }

@@ -70,13 +70,13 @@ export class QualityManager {
    * 每帧采样。
    * @param fps 当前滑动窗口平均帧率
    * @param idleSeconds 距上次用户交互的秒数
-   * @param growth 生命成长 0..1：成长越高，允许的最低档越高（避免身体变大粒子被砍稀）
+   * @param growth 生命成长 0..1：保留参数兼容；成长不限制性能降档
    */
-  sample(fps: number, idleSeconds: number, dt: number, growth = 0): QualitySampleResult {
+  sample(fps: number, idleSeconds: number, dt: number, _growth = 0, musicActive = false): QualitySampleResult {
     const before: [QualityTier, number] = [this.tier, this.targetFps];
 
     // ---- 低功耗帧调度：闲置逐步降帧，交互立即恢复 ----
-    if (idleSeconds >= 60) {
+    if (idleSeconds >= 60 && !musicActive) {
       this.targetFps = 15;
       this.idleFps15 = true;
     } else if (idleSeconds >= 20) {
@@ -92,16 +92,15 @@ export class QualityManager {
 
     // ---- 滞回升降档（仅活跃期评估）----
     this.dwell += dt;
-    const active = idleSeconds < 5;
-    if (!active || before[1] !== this.targetFps) {
+    if (before[1] !== this.targetFps) {
       // 闲置限帧和唤醒窗口不是持续 GPU 性能不足，不能累计到下一次交互。
       this.slowTimer = 0;
       this.fastTimer = 0;
     } else if (this.dwell >= this.minDwell) {
-      if (fps < this.downFps) {
+      if (fps < Math.min(this.downFps, this.targetFps * 0.75)) {
         this.slowTimer += dt;
         this.fastTimer = 0;
-      } else if (fps >= this.upFps) {
+      } else if (this.targetFps === 60 && fps >= this.upFps) {
         this.fastTimer += dt;
         this.slowTimer = 0;
       } else {
@@ -110,8 +109,8 @@ export class QualityManager {
       }
 
       const idx = TIER_ORDER.indexOf(this.tier);
-      // 成长保底：身体越大越不允许砍到稀疏档。
-      const minIdx = growth >= 0.7 ? 2 : growth >= 0.35 ? 1 : 0;
+      // 所有成长阶段都允许减轻负载，密度补偿独立处理。
+      const minIdx = 0; // 密度由 qualityAppearance 补偿，成长不再阻止性能降档。
       if (this.slowTimer >= 3.5 && idx > minIdx) {
         this.tier = TIER_ORDER[idx - 1];
         this.dwell = 0;

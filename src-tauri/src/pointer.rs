@@ -53,6 +53,8 @@ pub fn spawn(app: tauri::AppHandle) {
         let mut last = (f64::MIN, f64::MIN);
         let mut last_near = false;
         let mut last_btn = false;
+        let mut bounds = None;
+        let mut next_bounds = std::time::Instant::now();
         loop {
             let Some((mx, my)) = mouse_location() else {
                 std::thread::sleep(Duration::from_millis(32));
@@ -62,20 +64,24 @@ pub fn spawn(app: tauri::AppHandle) {
                 std::thread::sleep(Duration::from_millis(32));
                 continue;
             };
-            let pos = win.inner_position().ok();
-            let size = win.inner_size().ok();
-            if let (Some(pos), Some(size)) = (pos, size) {
-                // CGEvent 坐标为逻辑点；Tauri 窗口位置与尺寸为物理像素。
-                let scale = win.scale_factor().unwrap_or(1.0).max(1.0);
-                let x = mx - f64::from(pos.x) / scale;
-                let y = my - f64::from(pos.y) / scale;
-                let w = f64::from(size.width) / scale;
-                let h = f64::from(size.height) / scale;
-                let settings_open = app.get_webview_window("settings")
-                    .map(|settings| settings.is_visible().unwrap_or(true)).unwrap_or(false);
-                let near = win.is_visible().unwrap_or(false) && !settings_open
+            // 窗口查询涉及主线程，每秒最多四次，鼠标本身仍保持 60Hz 采集。
+            if std::time::Instant::now() >= next_bounds {
+                next_bounds = std::time::Instant::now() + Duration::from_millis(250);
+                bounds = win.inner_position().ok().zip(win.inner_size().ok()).map(|(pos, size)| {
+                    let scale = win.scale_factor().unwrap_or(1.0).max(1.0);
+                    let settings_open = app.get_webview_window("settings")
+                        .map(|settings| settings.is_visible().unwrap_or(true)).unwrap_or(false);
+                    (f64::from(pos.x) / scale, f64::from(pos.y) / scale,
+                     f64::from(size.width) / scale, f64::from(size.height) / scale,
+                     win.is_visible().unwrap_or(false) && !settings_open)
+                });
+            }
+            if let Some((origin_x, origin_y, w, h, enabled)) = bounds {
+                let x = mx - origin_x;
+                let y = my - origin_y;
+                let near = enabled
                     && x >= 0.0 && y >= 0.0 && x < w && y < h;
-                if near != last_near || (mx - last.0).abs() > 0.15 || (my - last.1).abs() > 0.15 {
+                if near != last_near || (near && ((mx - last.0).abs() > 0.15 || (my - last.1).abs() > 0.15)) {
                     last_near = near;
                     last = (mx, my);
                     let _ = win.emit(

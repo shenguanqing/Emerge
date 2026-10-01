@@ -55,7 +55,7 @@ pub fn system_audio_read(app: tauri::AppHandle) -> Result<AudioReading, String> 
     if reading.status < 0 {
         let message = ERROR.lock().map_err(|e| e.to_string())?.clone();
         // 原生层已写好可操作的中文原因，这里直接透传，不再二次包装。
-        super::update_audio_info(&app, &format!("系统声音：{}", if message.is_empty() { "捕获失败，请检查权限" } else { &message }), true);
+        super::update_audio_info(&app, &format!("{}{}", super::l("系统声音：", "System audio: "), if message.is_empty() { super::l("捕获失败，请检查权限", "capture failed — check permissions") } else { &message }), true);
         return Err(if message.is_empty() {
             "无法监听系统声音。请在 系统设置 → 隐私与安全性 → 屏幕与系统音频录制 中允许 Emerge 后重试。".into()
         } else {
@@ -69,11 +69,11 @@ pub fn system_audio_read(app: tauri::AppHandle) -> Result<AudioReading, String> 
     let label = match reading.status {
         1 => {
             let energy = (reading.bass * 0.4 + reading.mid * 0.4 + reading.treble * 0.2) * 100.;
-            if energy < 1. { "系统声音：已连接，等待声音".to_string() }
-            else { format!("系统声音：正在接收 · 能量 {:.0}%", energy) }
+            if energy < 1. { super::l("系统声音：已连接，等待声音", "System audio: connected, waiting for sound").to_string() }
+            else { format!("{} · {} {:.0}%", super::l("系统声音：正在接收", "System audio: receiving"), super::l("能量", "energy"), energy) }
         },
-        2 => "系统声音：正在启动…".to_string(),
-        _ => "系统声音：未开启".to_string(),
+        2 => super::l("系统声音：正在启动…", "System audio: starting…").to_string(),
+        _ => super::l("系统声音：未开启", "System audio: off").to_string(),
     };
     super::update_audio_info(&app, &label, false);
     Ok(reading)

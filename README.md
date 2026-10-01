@@ -8,14 +8,19 @@
 
 ## 当前状态
 
-**MVP（Phase 1–9）与生命闭环（Phase 10a）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度；**永久 DNA（Life ID）、成长（行星环/双核）、记忆性格、现实昼夜、离线回归问候与持久化存档**。分阶段验证记录见 [docs/reports/](docs/reports/)。
+2026-10-01 检查点：观察空间、四形态光丝与注意节律、中英文设置及音乐互斥已实现。类型检查、核心/输入/原生窗口回归通过，macOS debug 应用可构建；两小时记录只覆盖主进程与可归属子进程。Windows、全应用功耗/内存、真实休眠、多日连续性及真人生命感仍有未验收项，详见 [本日验收记录](docs/reports/acceptance-2026-10-01.md)。首次启动用户引导目前仅讨论，尚未实现。
 
-你的生命体首次运行时诞生（Life ID 永久保存），可见陪伴、附近温和互动与有效音乐共同推动成长——成熟会解锁行星环与第二核心；凌晨它会困、变暗；几天不开、回来时它会从松散中重新凝聚向你打招呼。存档在浏览器 localStorage（30 秒自动保存）。
+**MVP（Phase 1–9）与生命闭环（Phase 10a）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度；**永久 DNA（Life ID）、成长（Origin / Awaken / Conscious / Emerge 四形态）、记忆性格、现实昼夜、离线回归问候与持久化存档**。分阶段验证记录见 [docs/reports/](docs/reports/)。
+
+你的生命体首次运行时诞生（Life ID 永久保存），可见陪伴、附近温和互动与有效音乐共同推动成长——形态会从流带逐步组织成脉络与断续轨道；凌晨它会困、变暗；几天不开、回来时它会从松散中重新凝聚向你打招呼。存档在浏览器 localStorage（30 秒自动保存）。
 
 ```bash
 npm install
 npm run dev        # Web 开发服务器（http://localhost:5173）
 npm run build      # 类型检查 + 生产构建
+npm run test:core  # 核心行为、存档与成长回归
+npm run test:audio # 播放、暂停与自动补播回归
+npm run test:input # 音频与双击模式切换回归
 npm run preview    # 预览构建产物
 npm run app:dev    # 实时调试桌面端（推荐日常使用）
 npm run app:build  # 编译 debug 可执行文件（不打包）
@@ -129,3 +134,22 @@ Web 与桌面 localStorage 相互独立，可能有不同 Life ID、年龄和成
 - 音乐陪伴：连续有声两秒后开始按时长计分，静音不算；每日前 30 分钟贡献较高，之后递减。系统声音和文件音乐都适用，持续语音等声音也会计入，音量大小不增加积分倍率。
 
 设置中的「成长」可查看成长度、陪伴、互动和有效音乐时长。DNA 影响速度但不限制最终上限。旧存档自动迁移并保留生命身份和旧成长下限。详细规则与验证边界见 [三路径成长决策](docs/decisions/0003-growth-paths.md)。
+
+## 观察空间与本地验收
+
+双击粒子团打开观察空间；macOS 应用菜单「观察空间…」（Cmd+O）提供另一个入口。空间内可选择音乐文件、播放/暂停和停止；macOS 还可监听系统声音，与托盘状态一致。关闭观察空间会恢复鼠标穿透偏好，音乐保持当前播放状态。设置入口为应用菜单「设置…」（Cmd+,）或托盘。
+
+带 `growth`、`age`、`offline` 或 `timelapse` 参数的 Web 预览使用存档副本，不会写回真实成长记录。
+
+长时采样脚本仅读取指定 Emerge 进程及可归属的子进程，每分钟记录 RSS 和 CPU：
+
+```bash
+python3 scripts/macos-soak.py --pid <Emerge进程编号> --hours 2 --interval 60 --output output/macos-soak.jsonl
+```
+
+`output` 仅在本地保存，不提交。独立 WebKit/GPU 进程未计入；CPU 数字不能代表功耗，真实休眠及多日成长仍须单独验收。当前结果见 [2026-10-01 验收记录](docs/reports/acceptance-2026-10-01.md)。
+
+
+系统监听连接中或监听时，观察空间会禁用文件选择并隐藏文件播放/暂停，与托盘一致。新注意节律让局部节点依次传播、结构停顿后继续组织，并在附近输入时渐进调整方向；此版仍需真人生命感反馈。
+
+资源观察可在指定窗口内跟随应用重启：在上述采样命令中添加 `--follow-restarts --executable <Emerge可执行文件绝对路径>`。摘要会区分连续运行、重启次数与未运行样本，不把多个短会话视为连续运行通过。

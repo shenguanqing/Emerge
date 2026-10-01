@@ -22,6 +22,8 @@ export interface MusicFeatures {
 
 export class AudioSystem {
   private ctx: AudioContext | null = null;
+  private source: MediaElementAudioSourceNode | null = null;
+  private readonly unlock = () => { void this.resumeAndPlay(); };
   private analyser: AnalyserNode | null = null;
   private freq: Uint8Array | null = null;
   private audioEl: HTMLAudioElement | null = null;
@@ -41,11 +43,8 @@ export class AudioSystem {
     // 首次任意手势解锁 AudioContext / 补播（托盘选文件不在网页手势内）。
     if (typeof window !== 'undefined' && !this.unlockInstalled) {
       this.unlockInstalled = true;
-      const unlock = () => {
-        void this.resumeAndPlay();
-      };
-      window.addEventListener('pointerdown', unlock, { capture: true, once: false });
-      window.addEventListener('keydown', unlock, { capture: true, once: false });
+      window.addEventListener('pointerdown', this.unlock, { capture: true, once: false });
+      window.addEventListener('keydown', this.unlock, { capture: true, once: false });
     }
   }
 
@@ -69,12 +68,15 @@ export class AudioSystem {
     this.audioEl.src = url;
     this.audioEl.loop = true;
     this.audioEl.preload = 'auto';
+    const element = this.audioEl;
     this.audioEl.addEventListener('error', () => {
-      const code = this.audioEl?.error?.code;
+      if (this.audioEl !== element) return;
+      const code = element.error?.code;
       console.warn('[audio] element error', code, url.slice(0, 80));
     });
 
     const source = this.ctx.createMediaElementSource(this.audioEl);
+    this.source = source;
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.6;
@@ -91,6 +93,7 @@ export class AudioSystem {
     if (!this.audioEl || !this.pendingPlay) return;
     try {
       if (this.ctx?.state === 'suspended') await this.ctx.resume();
+      if (!this.pendingPlay || !this.audioEl) return;
       await this.audioEl.play();
       this.pendingPlay = false;
     } catch {
@@ -110,6 +113,7 @@ export class AudioSystem {
       this.pendingPlay = true;
       void this.resumeAndPlay();
     } else {
+      this.pendingPlay = false;
       this.audioEl.pause();
     }
   }
@@ -172,10 +176,23 @@ export class AudioSystem {
       URL.revokeObjectURL(this.objectUrl);
       this.objectUrl = null;
     }
+    this.source?.disconnect();
+    this.source = null;
     this.analyser?.disconnect();
     this.bassAvg = 0;
     this.lastBeatAt = 0;
     this.analyser = null;
     this.freq = null;
   }
+  dispose(): void {
+    this.detach();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pointerdown', this.unlock, true);
+      window.removeEventListener('keydown', this.unlock, true);
+    }
+    const context = this.ctx;
+    this.ctx = null;
+    if (context && context.state !== 'closed') void context.close().catch(() => {});
+  }
+
 }
