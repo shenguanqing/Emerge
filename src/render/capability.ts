@@ -1,8 +1,8 @@
 /**
  * GPU 能力探测：记录 WebGPU 适配器与 WebGL2 渲染器信息。
- * Phase 1 渲染固定使用 WebGL2；WebGPU Compute 属 Phase 2 范围。
  * 用最小结构探测，避免对 @webgpu/types 的类型耦合。
  */
+import { t } from '../i18n';
 export interface CapabilityReport {
   webgpu: { available: boolean; adapter: string | null };
   webgl2: { available: boolean; renderer: string | null };
@@ -35,8 +35,8 @@ export async function probeCapabilities(): Promise<CapabilityReport> {
         const info = adapter.info;
         report.webgpu.adapter = info
           ? [info.vendor, info.architecture, info.description].filter(Boolean).join(' ') ||
-            'WebGPU 适配器'
-          : 'WebGPU 适配器';
+            'WebGPU'
+          : 'WebGPU';
       }
     } catch {
       report.webgpu.available = false;
@@ -61,11 +61,11 @@ export async function probeCapabilities(): Promise<CapabilityReport> {
 
   if (report.webgl2.available) {
     report.chosen = 'webgl2';
-    report.note = '渲染使用 WebGL2；WebGPU Compute 将于 Phase 2 接入';
+    report.note = t('note.capabilityWebgl');
   } else if (report.webgpu.available) {
-    report.note = '仅 WebGPU 可用；WebGPU 渲染后端属 Phase 2 范围';
+    report.note = t('note.capabilityWebgpu');
   } else {
-    report.note = '无可用 GPU 后端';
+    report.note = t('note.noBackend');
   }
   return report;
 }

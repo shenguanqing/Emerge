@@ -4,30 +4,25 @@
 
 mod audio;
 mod pointer;
+mod locale;
+use locale::tr;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{
-  menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+  menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
   tray::TrayIconBuilder,
   AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 
 /// 系统声音监听开关（托盘勾选的真实状态，避免与 CheckMenuItem 自动切换打架）。
 static SYS_AUDIO_ON: AtomicBool = AtomicBool::new(false);
-/// 界面语言（false = 中文，true = English）；由前端 `set_ui_locale` 同步。
-static UI_LOCALE_EN: AtomicBool = AtomicBool::new(false);
 /// 托盘菜单句柄：语言切换重建菜单后，动态文本更新需要拿到最新一组。
+#[derive(Clone)]
+struct NativeLifeInfo { days: u32, stage: String, pct: u32 }
+static LIFE_INFO: Mutex<Option<NativeLifeInfo>> = Mutex::new(None);
+static MUSIC_NAME: Mutex<String> = Mutex::new(String::new());
 static TRAY_HANDLES: Mutex<Option<TrayHandles>> = Mutex::new(None);
-
-/// 按 UI 语言取文案（zh 默认，en 备选）。
-pub fn l(zh: &'static str, en: &'static str) -> &'static str {
-  if UI_LOCALE_EN.load(Ordering::SeqCst) {
-    en
-  } else {
-    zh
-  }
-}
 
 struct TrayHandles {
   life: MenuItem<tauri::Wry>,
@@ -51,29 +46,29 @@ fn set_file_music_enabled(_app: &AppHandle, enabled: bool) {
   });
 }
 
-#[tauri::command]
-fn update_life_info(_app: AppHandle, text: String) {
-  with_tray(|h| {
-    let _ = h.life.set_text(text);
-  });
+fn life_info_text(info: &NativeLifeInfo) -> String {
+  let stage = locale::stage_name(&info.stage);
+  format!("{}{} · {} {} {}%", info.days, tr("unit.days"), stage, tr("unit.growth"), info.pct)
 }
-
+#[tauri::command]
+fn update_life_info(_app: AppHandle, days: u32, stage: String, pct: u32) {
+  let info = NativeLifeInfo { days, stage, pct };
+  if let Ok(mut cached) = LIFE_INFO.lock() { *cached = Some(info.clone()); }
+  with_tray(|h| { let _ = h.life.set_text(life_info_text(&info)); });
+}
+fn music_info_text(text: &str) -> String {
+  if text.trim().is_empty() { return tr("native.noMusic").to_string(); }
+  let mut name: String = text.chars().take(28).collect();
+  if text.chars().count() > 28 { name.push('…'); }
+  locale::format("native.playing", &[("name", &name)])
+}
 /// 托盘显示当前播放的音乐名；空字符串恢复占位。
 #[tauri::command]
 fn update_music_info(_app: AppHandle, text: String) {
+  if let Ok(mut cached) = MUSIC_NAME.lock() { *cached = text.clone(); }
   with_tray(|h| {
-    let shown = if text.trim().is_empty() {
-      l("未播放音乐", "No music playing").to_string()
-    } else if text.chars().count() > 28 {
-      let mut s: String = text.chars().take(28).collect();
-      s.push('…');
-      format!("{}：{s}", l("播放中", "Playing"))
-    } else {
-      format!("{}：{text}", l("播放中", "Playing"))
-    };
-    if h.music.text().ok().as_deref() != Some(shown.as_str()) {
-      let _ = h.music.set_text(shown);
-    }
+    let shown = music_info_text(&text);
+    if h.music.text().ok().as_deref() != Some(shown.as_str()) { let _ = h.music.set_text(shown); }
   });
 }
 
@@ -95,10 +90,12 @@ static TOPMOST: AtomicBool = AtomicBool::new(true);
 static OBSERVATORY_OPEN: AtomicBool = AtomicBool::new(false);
 
 fn pick_audio_file() -> Option<String> {
+  let prompt = tr("native.pickPrompt");
+  let script = format!(r#"POSIX path of (choose file with prompt "{prompt}" of type {{"public.audio","public.mp3","public.mpeg-4-audio","com.apple.m4a-audio","public.aiff-audio","com.microsoft.mp3"}})"#);
   let out = std::process::Command::new("osascript")
     .args([
       "-e",
-      r#"POSIX path of (choose file with prompt "选择音乐文件" of type {"public.audio","public.mp3","public.mpeg-4-audio","com.apple.m4a-audio","public.aiff-audio","com.microsoft.mp3"})"#,
+      &script,
     ])
     .output()
     .ok()?;
@@ -119,9 +116,10 @@ fn effective_clickthrough(requested: bool, settings_open: bool, observatory_open
 }
 
 fn apply_main_window_flags(app: &tauri::AppHandle, settings_open: bool) -> Result<(), String> {
-  let win = app.get_webview_window("main").ok_or("主窗口不可用")?;
+  let win = app.get_webview_window("main").ok_or(tr("error.mainUnavailable"))?;
   // 设置窗必须盖住全屏主窗：设置打开时主窗暂时取消置顶，避免两窗互相压叠导致设置“空白/点不到”。
-  let topmost = TOPMOST.load(Ordering::SeqCst) && !settings_open;
+  let auxiliary_open = settings_open || app.get_webview_window("welcome").is_some();
+  let topmost = TOPMOST.load(Ordering::SeqCst) && !auxiliary_open;
   win.set_always_on_top(topmost).map_err(|e| e.to_string())?;
   win.set_ignore_cursor_events(effective_clickthrough(pointer::passthrough(), settings_open, OBSERVATORY_OPEN.load(Ordering::SeqCst))).map_err(|e| e.to_string())?;
   Ok(())
@@ -199,34 +197,34 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, TrayHand
   let showhide = MenuItem::with_id(
     app,
     "showhide",
-    l("显示 / 隐藏", "Show / Hide"),
+    tr("native.showHide"),
     true,
     Some("CmdOrCtrl+Shift+E"),
   )?;
   let opensettings =
-    MenuItem::with_id(app, "opensettings", l("设置", "Settings"), true, Some("CmdOrCtrl+,"))?;
+    MenuItem::with_id(app, "opensettings", tr("native.settings"), true, Some("CmdOrCtrl+,"))?;
   let system_audio = CheckMenuItem::with_id(
     app,
     "systemaudio",
-    l("监听系统声音", "Listen to System Audio"),
+    tr("native.listen"),
     true,
     false,
     Some("CmdOrCtrl+Shift+M"),
   )?;
   let pick_music =
-    MenuItem::with_id(app, "pickmusic", l("选择音乐文件…", "Pick a Music File…"), true, None::<&str>)?;
-  let stop_music = MenuItem::with_id(app, "stopmusic", l("停止音乐", "Stop Music"), true, None::<&str>)?;
-  let quit = MenuItem::with_id(app, "quit", l("退出", "Quit"), true, Some("CmdOrCtrl+Q"))?;
+    MenuItem::with_id(app, "pickmusic", tr("native.pickMusic"), true, None::<&str>)?;
+  let stop_music = MenuItem::with_id(app, "stopmusic", tr("native.stopMusic"), true, None::<&str>)?;
+  let quit = MenuItem::with_id(app, "quit", tr("native.quit"), true, Some("CmdOrCtrl+Q"))?;
   let life_info =
-    MenuItem::with_id(app, "life-info", l("生命信息加载中…", "Life info loading…"), false, None::<&str>)?;
+    MenuItem::with_id(app, "life-info", tr("native.lifeLoading"), false, None::<&str>)?;
   let audio_info =
-    MenuItem::with_id(app, "audio-info", l("系统声音：未开启", "System audio: off"), false, None::<&str>)?;
+    MenuItem::with_id(app, "audio-info", tr("native.audioOff"), false, None::<&str>)?;
   let music_info =
-    MenuItem::with_id(app, "music-info", l("未播放音乐", "No music playing"), false, None::<&str>)?;
+    MenuItem::with_id(app, "music-info", tr("native.noMusic"), false, None::<&str>)?;
   let audio_permission = MenuItem::with_id(
     app,
     "audio-permission",
-    l("打开系统声音权限设置…", "Open System Audio Privacy Settings…"),
+    tr("native.audioPrivacy"),
     true,
     None::<&str>,
   )?;
@@ -273,43 +271,85 @@ fn rebuild_tray(app: &AppHandle) -> tauri::Result<()> {
   let _ = handles.audio_toggle.set_checked(on);
   let _ = handles.pick_music.set_enabled(!on);
   let _ = handles.stop_music.set_enabled(!on);
+  if let Ok(cached) = LIFE_INFO.lock() {
+    if let Some(info) = cached.as_ref() { let _ = handles.life.set_text(life_info_text(info)); }
+  }
+  if let Ok(name) = MUSIC_NAME.lock() { let _ = handles.music.set_text(music_info_text(&name)); }
   *TRAY_HANDLES.lock().expect("tray handles poisoned") = Some(handles);
+  let _ = audio::system_audio_read(app.clone());
   Ok(())
 }
 
-/// 保留平台默认编辑菜单，给 macOS 应用菜单补上设置快捷键。
+/// 保留标准菜单的原生行为与快捷键，全部标题使用当前界面语言。
 fn rebuild_app_menu(app: &AppHandle) -> tauri::Result<()> {
-  let menu = Menu::default(app)?;
-  #[cfg(target_os = "macos")]
-  if let Some(item) = menu.items()?.first() {
-    if let Some(submenu) = item.as_submenu() {
-      let settings = MenuItem::with_id(app, "opensettings", l("设置…", "Settings…"), true, Some("CmdOrCtrl+,"))?;
-      submenu.insert(&settings, 1)?;
-      let observe = MenuItem::with_id(app, "openobservatory", l("观察空间…", "Observatory…"), true, Some("CmdOrCtrl+O"))?;
-      submenu.insert(&observe, 2)?;
-    }
-  }
+  let metadata = AboutMetadata {
+    name: Some("Emerge".into()), version: Some(app.package_info().version.to_string()),
+    ..Default::default()
+  };
+  let window = Submenu::with_id_and_items(app, "__tauri_window_menu__", tr("native.window"), true, &[
+    &PredefinedMenuItem::minimize(app, Some(tr("native.minimize")))?,
+    &PredefinedMenuItem::maximize(app, Some(tr("native.maximize")))?,
+    &PredefinedMenuItem::separator(app)?,
+    &PredefinedMenuItem::close_window(app, Some(tr("native.close")))?,
+  ])?;
+  let help = Submenu::with_id_and_items(app, "__tauri_help_menu__", tr("native.help"), true, &[
+    #[cfg(not(target_os = "macos"))]
+    &PredefinedMenuItem::about(app, Some(tr("native.about")), Some(metadata.clone()))?,
+  ])?;
+  let menu = Menu::with_items(app, &[
+    #[cfg(target_os = "macos")]
+    &Submenu::with_items(app, "Emerge", true, &[
+      &PredefinedMenuItem::about(app, Some(tr("native.about")), Some(metadata))?,
+      &MenuItem::with_id(app, "opensettings", tr("native.settingsMenu"), true, Some("CmdOrCtrl+,"))?,
+      &MenuItem::with_id(app, "openobservatory", tr("native.observatory"), true, Some("CmdOrCtrl+O"))?,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::services(app, Some(tr("native.services")))?,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::hide(app, Some(tr("native.hide")))?,
+      &PredefinedMenuItem::hide_others(app, Some(tr("native.hideOthers")))?,
+      &PredefinedMenuItem::show_all(app, Some(tr("native.showAll")))?,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::quit(app, Some(tr("native.quit")))?,
+    ])?,
+    &Submenu::with_items(app, tr("native.file"), true, &[
+      &PredefinedMenuItem::close_window(app, Some(tr("native.close")))?,
+      #[cfg(not(target_os = "macos"))]
+      &PredefinedMenuItem::quit(app, Some(tr("native.quit")))?,
+    ])?,
+    &Submenu::with_items(app, tr("native.edit"), true, &[
+      &PredefinedMenuItem::undo(app, Some(tr("native.undo")))?,
+      &PredefinedMenuItem::redo(app, Some(tr("native.redo")))?,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::cut(app, Some(tr("native.cut")))?,
+      &PredefinedMenuItem::copy(app, Some(tr("native.copy")))?,
+      &PredefinedMenuItem::paste(app, Some(tr("native.paste")))?,
+      &PredefinedMenuItem::select_all(app, Some(tr("native.selectAll")))?,
+    ])?,
+    #[cfg(target_os = "macos")]
+    &Submenu::with_items(app, tr("native.view"), true, &[
+      &PredefinedMenuItem::fullscreen(app, Some(tr("native.fullscreen")))?,
+    ])?,
+    &window, &help,
+  ])?;
   app.set_menu(menu)?;
   Ok(())
 }
 
 /// 前端同步界面语言：重建托盘菜单与设置窗标题。
+/// 中/英/日/韩共用前端词表；各语言分别重建菜单与辅助窗口标题。
 #[tauri::command]
 fn set_ui_locale(app: AppHandle, locale: String) {
-  let en = locale == "en";
-  let zh = locale == "zh";
-  if !en && !zh {
-    return;
-  }
-  if UI_LOCALE_EN.load(Ordering::SeqCst) != en {
-    UI_LOCALE_EN.store(en, Ordering::SeqCst);
+  if locale::set_locale(&locale) {
     let _ = rebuild_app_menu(&app);
     if let Err(e) = rebuild_tray(&app) {
       eprintln!("[tray] rebuild failed: {e}");
     }
   }
   if let Some(win) = app.get_webview_window("settings") {
-    let _ = win.set_title(l("Emerge 设置", "Emerge Settings"));
+    let _ = win.set_title(tr("native.settingsTitle"));
+  }
+  if let Some(win) = app.get_webview_window("welcome") {
+    let _ = win.set_title(tr("native.welcomeTitle"));
   }
 }
 
@@ -328,7 +368,7 @@ fn open_settings_window(app: &tauri::AppHandle) {
     "settings",
     WebviewUrl::App("index.html?window=settings".into()),
   )
-  .title(l("Emerge 设置", "Emerge Settings"))
+  .title(tr("native.settingsTitle"))
   .inner_size(420.0, 720.0)
   .resizable(false)
   .decorations(true)
@@ -360,12 +400,12 @@ fn read_music_file(path: String) -> Result<tauri::ipc::Response, String> {
   let p = std::path::Path::new(&path);
   let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
   if !matches!(ext.as_str(), "mp3" | "m4a" | "wav" | "aac" | "ogg" | "flac" | "aiff" | "aif") {
-    return Err(format!("不支持的音频格式：{ext}"));
+    return Err(locale::format("error.audioFormat", &[("ext", &ext)]));
   }
   if !p.is_file() {
-    return Err(format!("文件不存在：{path}"));
+    return Err(locale::format("error.fileMissing", &[("path", &path)]));
   }
-  let bytes = std::fs::read(p).map_err(|e| format!("读取失败：{e}"))?;
+  let bytes = std::fs::read(p).map_err(|e| locale::format("error.fileRead", &[("e", &e.to_string())]))?;
   Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -376,6 +416,82 @@ fn apply_settings(app: tauri::AppHandle, topmost: bool, clickthrough: bool) -> R
   pointer::set_passthrough(clickthrough);
   let settings_open = app.get_webview_window("settings").is_some();
   apply_main_window_flags(&app, settings_open)
+}
+
+/// 引导完成标记独立于生命存档；写入成功后才关闭欢迎窗。
+fn onboarding_done_file(path: &std::path::Path) -> bool {
+  std::fs::read_to_string(path).ok().and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    .map(|v| v.get("completed").and_then(|x| x.as_bool()) == Some(true)).unwrap_or(false)
+}
+
+fn save_onboarding_state(path: &std::path::Path, completed: bool) -> Result<(), String> {
+  if let Some(dir) = path.parent() { std::fs::create_dir_all(dir).map_err(|e| e.to_string())?; }
+  let temporary = path.with_extension("tmp");
+  let contents = serde_json::json!({ "version": 1, "completed": completed }).to_string();
+  std::fs::write(&temporary, contents).map_err(|e| e.to_string())?;
+  std::fs::rename(temporary, path).map_err(|e| e.to_string())
+}
+
+fn save_onboarding_done(path: &std::path::Path) -> Result<(), String> {
+  save_onboarding_state(path, true)
+}
+
+fn onboarding_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+  app.path().app_config_dir().map(|dir| dir.join("onboarding.json")).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_onboarding(app: AppHandle) -> Result<(), String> {
+  if let Some(existing) = app.get_webview_window("welcome") {
+    if let Some(settings) = app.get_webview_window("settings") { settings.close().map_err(|e| e.to_string())?; }
+    apply_main_window_flags(&app, false)?;
+    existing.show().map_err(|e| e.to_string())?;
+    return existing.set_focus().map_err(|e| e.to_string());
+  }
+  let main = app.get_webview_window("main").ok_or(tr("error.mainUnavailable"))?;
+  let available = main.current_monitor().ok().flatten().map(|m| {
+    (m.work_area().size.width as f64 / m.scale_factor(), m.work_area().size.height as f64 / m.scale_factor())
+  }).unwrap_or((800., 800.));
+  let welcome = WebviewWindowBuilder::new(&app, "welcome", WebviewUrl::App("index.html?window=welcome".into()))
+    .title(tr("native.welcomeTitle"))
+    .inner_size(560f64.min((available.0 - 48.).max(360.)), 640f64.min((available.1 - 60.).max(420.)))
+    .min_inner_size(360., 420.).resizable(true).decorations(true).skip_taskbar(true).always_on_top(true).center()
+    .build().map_err(|e| e.to_string())?;
+  if let Some(settings) = app.get_webview_window("settings") { settings.close().map_err(|e| e.to_string())?; }
+  let _ = main.emit("close-observatory", ());
+  main.show().map_err(|e| e.to_string())?;
+  let _ = main.emit("life-visibility", true);
+  apply_main_window_flags(&app, false)?;
+  welcome.set_focus().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn show_onboarding_if_needed(app: AppHandle, existing_life: bool) -> Result<(), String> {
+  let path = onboarding_path(&app)?;
+  if onboarding_done_file(&path) { return Ok(()); }
+  // 升级用户不强制重走引导，仍可从设置手动打开。
+  if existing_life && !path.exists() { return save_onboarding_done(&path); }
+  if !path.exists() { save_onboarding_state(&path, false)?; }
+  open_onboarding(app)
+}
+
+#[tauri::command]
+fn complete_onboarding(app: AppHandle) -> Result<(), String> {
+  open_settings_window(&app);
+  if app.get_webview_window("settings").is_none() { return Err(tr("error.openSettings").into()); }
+  if let Err(error) = save_onboarding_done(&onboarding_path(&app)?) {
+    if let Some(welcome) = app.get_webview_window("welcome") { let _ = welcome.set_focus(); }
+    return Err(error);
+  }
+  if let Some(welcome) = app.get_webview_window("welcome") { welcome.close().map_err(|e| e.to_string())?; }
+  Ok(())
+}
+
+#[tauri::command]
+fn onboarding_pick_music(app: AppHandle) -> Result<(), String> {
+  ensure_file_music_available()?;
+  handle_tray_event(&app, "pickmusic");
+  Ok(())
 }
 
 /// 全屏粒子层中的 UI 使用系统工作区，避开菜单栏、刘海与 Dock。
@@ -391,7 +507,7 @@ fn work_area_insets(window: (f64, f64, f64, f64), area: (f64, f64, f64, f64), sc
 
 #[tauri::command]
 fn desktop_content_insets(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
-  let monitor = window.current_monitor().map_err(|e| e.to_string())?.ok_or("显示器不可用")?;
+  let monitor = window.current_monitor().map_err(|e| e.to_string())?.ok_or(tr("error.monitorUnavailable"))?;
   let area = monitor.work_area();
   let pos = window.inner_position().map_err(|e| e.to_string())?;
   let size = window.inner_size().map_err(|e| e.to_string())?;
@@ -420,7 +536,7 @@ fn set_observatory_open(app: AppHandle, open: bool) -> Result<(), String> {
 #[tauri::command]
 fn ensure_file_music_available() -> Result<(), String> {
   if SYS_AUDIO_ON.load(Ordering::SeqCst) {
-    return Err(l("请先停止系统声音监听，再选择音乐文件", "Stop system audio before choosing a music file").into());
+    return Err(tr("error.stopSystemFirst").into());
   }
   Ok(())
 }
@@ -505,7 +621,11 @@ fn main() {
       set_system_audio_enabled,
       set_observatory_open,
       ensure_file_music_available,
-      desktop_content_insets
+      desktop_content_insets,
+      open_onboarding,
+      show_onboarding_if_needed,
+      complete_onboarding,
+      onboarding_pick_music
     ])
     .plugin(
       tauri_plugin_window_state::Builder::default()
@@ -518,6 +638,10 @@ fn main() {
     )
     .on_window_event(|window, event| {
       // 设置窗关闭后恢复用户的置顶和穿透偏好；记住窗口位置。
+      if window.label() == "welcome" && matches!(event, WindowEvent::Destroyed) {
+        let settings_open = window.app_handle().get_webview_window("settings").is_some();
+        let _ = apply_main_window_flags(window.app_handle(), settings_open);
+      }
       if window.label() == "settings" {
         match event {
           WindowEvent::Moved(pos) => {
@@ -592,6 +716,22 @@ mod window_tests {
       assert!(effective_clickthrough(requested, true, false));
       assert_eq!(effective_clickthrough(requested, false, false), requested);
     }
+  }
+
+  #[test]
+  fn onboarding_marker_survives_reload_and_handles_invalid_data() {
+    let dir = std::env::temp_dir().join(format!("emerge-onboarding-{}", std::process::id()));
+    let path = dir.join("onboarding.json");
+    assert!(!super::onboarding_done_file(&path));
+    super::save_onboarding_state(&path, false).unwrap();
+    assert!(!super::onboarding_done_file(&path));
+    super::save_onboarding_done(&path).unwrap();
+    assert!(super::onboarding_done_file(&path));
+    std::fs::write(&path, "{\"completed\":false}").unwrap();
+    assert!(!super::onboarding_done_file(&path));
+    std::fs::write(&path, "broken").unwrap();
+    assert!(!super::onboarding_done_file(&path));
+    let _ = std::fs::remove_dir_all(dir);
   }
 
   #[test]

@@ -15,12 +15,15 @@ const props = defineProps<{
 }>();
 
 const qualityLabel = computed(() => t(`tier.${props.quality}`) || props.quality);
+const backendLabel = computed(() => props.backend === 'probing' ? t('diag.probing')
+  : props.backend === 'none' ? t('diag.none') : props.backend === 'failed' ? t('note.initFailed') : props.backend);
+const moodLabel = computed(() => props.mood === 'calm' ? t('diag.mood.calm') : props.mood);
 </script>
 
 <template>
   <div class="diag" aria-live="polite">
-    <span class="chip">{{ t('diag.backend') }} {{ backend }}</span>
-    <span class="chip">{{ mood }}</span>
+    <span class="chip">{{ t('diag.backend') }} {{ backendLabel }}</span>
+    <span class="chip">{{ moodLabel }}</span>
     <span v-if="life" class="chip">{{ life }}</span>
     <span class="chip">{{ fps }} FPS</span>
     <span class="chip">{{ particles.toLocaleString() }} {{ t('diag.particles') }}</span>

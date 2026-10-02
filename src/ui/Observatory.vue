@@ -75,6 +75,7 @@ function pushView(): void {
 
 function onWheel(e: WheelEvent): void {
   e.preventDefault();
+  dismissTip();
   const next = clampCamera({
     ...view.value,
     distance: view.value.distance * (e.deltaY > 0 ? 1.05 : 0.95),
@@ -96,6 +97,7 @@ function onDown(e: PointerEvent): void {
 
 function onMove(e: PointerEvent): void {
   if (!dragging.value) return;
+  dismissTip();
   const dx = e.clientX - lastX;
   const dy = e.clientY - lastY;
   lastX = e.clientX;
@@ -129,6 +131,7 @@ function onKey(e: KeyboardEvent): void {
   else if (e.key === '-' || e.key === '_') view.value = clampCamera({ ...view.value, distance: view.value.distance * 1.05 });
   else return;
   e.preventDefault();
+  dismissTip();
   pushView();
 }
 
@@ -137,13 +140,27 @@ function resetView(): void {
   pushView();
 }
 
+/** 首访提示：按设备只教一次；拖动 / 滚轮 / 缩放键 / 知道了 / 关闭任一路径都算看过。 */
+const TIP_SEEN_KEY = 'emerge.ui.obsTipSeen';
+const firstTip = ref(false);
+let tipShownThisOpen = false;
+function dismissTip(): void {
+  if (!firstTip.value) return;
+  firstTip.value = false;
+  try { localStorage.setItem(TIP_SEEN_KEY, '1'); } catch { /* 存储不可用时本次会话内不再显示 */ }
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKey, true);
   pushView();
+  let seen = false;
+  try { seen = localStorage.getItem(TIP_SEEN_KEY) === '1'; } catch { /* 按未见处理 */ }
+  if (!seen) { firstTip.value = true; tipShownThisOpen = true; }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey, true);
+  if (tipShownThisOpen) dismissTip();
 });
 
 defineExpose({
@@ -168,7 +185,7 @@ defineExpose({
     <aside class="obs-rail">
       <header class="obs-head">
         <div>
-          <p class="obs-kicker">OBSERVATORY</p>
+          <p class="obs-kicker">{{ t('obs.kicker') }}</p>
           <h1 class="obs-title">{{ t('obs.title') }}</h1>
         </div>
         <button class="obs-close" type="button" :aria-label="t('obs.ariaClose')" @click="emit('close')">
@@ -214,7 +231,7 @@ defineExpose({
       </section>
 
       <section class="obs-block">
-        <h2>Evolution</h2>
+        <h2>{{ t('obs.evolution') }}</h2>
         <p class="obs-evo">
           <strong>{{ growthPct }}%</strong>
           <span>{{ stageLabel }}</span>
@@ -236,6 +253,17 @@ defineExpose({
         <p class="obs-hint">{{ t('obs.hint') }}</p>
       </footer>
     </aside>
+
+    <Transition name="obs-tip">
+      <div v-if="firstTip" class="obs-tip">
+        <ul class="obs-tip-list">
+          <li><b>{{ t('obs.first.drag') }}</b><span>{{ t('obs.first.dragDesc') }}</span></li>
+          <li><b>{{ t('obs.first.zoom') }}</b><span>{{ t('obs.first.zoomDesc') }}</span></li>
+          <li><b>{{ t('obs.first.exit') }}</b><span>{{ t('obs.first.exitDesc') }}</span></li>
+        </ul>
+        <button class="obs-tip-ok" type="button" @click="dismissTip">{{ t('obs.first.ok') }}</button>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -442,5 +470,88 @@ defineExpose({
   font-size: 11px;
   line-height: 1.5;
   color: rgba(242, 240, 234, 0.38);
+}
+
+/* ===== 首访提示：左下角玻璃卡，pointer-events 全关（按钮除外），不挡拖拽热区 ===== */
+.obs-tip {
+  position: absolute;
+  left: calc(20px + var(--native-left, 0px));
+  bottom: calc(20px + var(--obs-bottom));
+  z-index: 1;
+  pointer-events: none;
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(14, 14, 16, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  max-width: min(300px, calc(100vw - 40px - var(--native-left, 0px)));
+  box-sizing: border-box;
+}
+
+.obs-tip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.obs-tip-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.obs-tip-list b {
+  font-weight: 600;
+  color: #f2f0ea;
+  white-space: nowrap;
+}
+
+.obs-tip-list span {
+  color: rgba(242, 240, 234, 0.55);
+}
+
+.obs-tip-ok {
+  pointer-events: auto;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f0ea;
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.obs-tip-ok:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.obs-tip-enter-active,
+.obs-tip-leave-active {
+  transition:
+    opacity 0.24s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.obs-tip-enter-from,
+.obs-tip-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .obs-tip-enter-active,
+  .obs-tip-leave-active {
+    transition-duration: 0.01ms;
+  }
 }
 </style>

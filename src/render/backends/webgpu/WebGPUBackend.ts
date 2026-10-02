@@ -320,6 +320,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   if (layer < 0.5) { sizeMul = sizeMul * (1.0 + coreGlow * 0.12); }
   sizeMul = sizeMul * (1.0 + isArc * streamArc * 0.25);
   sizeMul = sizeMul * (1.0 + isSpoke * spoke * along * 0.18);
+  // 逐粒子大小差异：大点软芯、小点尘埃，避免均匀颗粒（与 WebGL2 同式）。
+  sizeMul = sizeMul * (0.80 + 0.55 * hash1(seed * 57.3));
   let filament = select(0.0, 1.0, seed >= 0.16 && seed < 0.84 && hash1(seed * 151.7) > 0.55);
   let ahead = r.vp * vec4f(p4.xyz + velIn[ii].xyz * 0.04, 1.0);
   let axis = normalize(ahead.xy / max(ahead.w, 0.001) - clip.xy / max(clip.w, 0.001) + vec2f(0.000001, 0.0));
@@ -708,10 +710,10 @@ export class WebGPUBackend {
     this.particleCount = Math.min(count, MAX_PARTICLES);
   }
 
-  /** 质量档位：粒子基础尺寸。 */
+  /** 质量档位：粒子基础尺寸；低于可读下限的点会闪烁成灰尘，钳到 1.35 逻辑像素。 */
   setPointSize(size: number): void {
-    this.pointSize = size;
-    this.renderData[16] = size * this.dpr;
+    this.pointSize = Math.max(1.35, size);
+    this.renderData[16] = this.pointSize * this.dpr;
   }
 
   /** 设置面板：团大小倍率 + 三层配色 + 亮度倍率。 */

@@ -22,7 +22,8 @@
     "types": [
       "vite/client",
       "@webgpu/types"
-    ]
+    ],
+    "resolveJsonModule": true
   },
   "include": [
     "src/**/*.ts",

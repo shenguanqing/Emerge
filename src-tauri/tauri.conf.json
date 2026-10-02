@@ -19,6 +19,7 @@
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
         "resizable": false,
         "shadow": false,
         "focus": false,

@@ -37,7 +37,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 /** 画布代数：WebGPU 失败回退 WebGL2 时 +1，让 Vue 换新 canvas（旧 canvas 不能再取 WebGL context）。 */
 const canvasEpoch = ref(0);
 const diag = reactive({
-  backend: '探测中…',
+  backend: 'probing',
   note: '',
   fps: 0,
   particles: DEFAULT_LIFE_PARAMS.particleCount,
@@ -181,7 +181,7 @@ function applyVisual(): void {
   if (!backend) return;
   const c = resolveColors(visual);
   backend.setVisual(visual.bodyScale, c.core, c.body, c.aura, visual.brightness);
-  backend.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.7));
+  backend.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.6));
 }
 let rafId = 0;
 let lastTime = 0;
@@ -216,7 +216,7 @@ function applyTier(tier: QualityTier): void {
   const count = appearance.count;
   backend?.setActiveCount(count);
   tierPointSize = appearance.pointSize;
-  backend?.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.7));
+  backend?.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.6));
   diag.particles = count;
   diag.quality = tier;
   resize();
@@ -341,7 +341,7 @@ onMounted(async () => {
   const params = { ...DEFAULT_LIFE_PARAMS };
   const simParams = { ...DEFAULT_SIMULATION_PARAMS };
   applyDNA(dna, params, simParams);
-  diag.life = `${dna.id} · ${growth.state.stage}`;
+  diag.life = `${dna.id} · ${stageDisplayName(growth.state.stage)}`;
   diag.particles = Math.round(params.particleCount * growth.state.particleMul);
   observatory.dna = {
     id: dna.id,
@@ -505,15 +505,15 @@ onMounted(async () => {
         canvasEpoch.value += 1;
         await nextTick();
         const next = canvasRef.value;
-        if (!next) throw new Error('WebGL2 回退画布未就绪');
+        if (!next) throw new Error(t('note.canvasNotReady'));
         canvas = next;
         if (!isDesktop) { pointer.detach(); pointer.attach(next); }
       }
       active = new WebGL2Backend(canvas, params, simParams, isDesktop);
     }
   } catch (err) {
-    diag.backend = t('note.initFailed');
-    diag.note = String(err);
+    diag.backend = 'failed';
+    diag.note = t('note.initError', { e: String(err) });
     return;
   }
 
@@ -522,7 +522,7 @@ onMounted(async () => {
   applyPlacement();
 
   if (!active) {
-    diag.backend = '无可用后端';
+    diag.backend = 'none';
     diag.note = t('note.noBackend');
     return;
   }
@@ -587,7 +587,7 @@ onMounted(async () => {
       diag.particles = appearance.count;
       activeBackend.setActiveCount(appearance.count);
       tierPointSize = appearance.pointSize;
-      activeBackend.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.7));
+      activeBackend.setPointSize(tierPointSize * visual.pointScale * Math.pow(visual.bodyScale, 0.6));
       // 生命信息：托盘只留天数与成长；Life ID 在设置「成长」里查看。
       const daysSeen = lifeEngine.getGrowthSummary()?.days ?? st.ageDays;
       diag.life = t('trayLife', {
@@ -600,7 +600,7 @@ onMounted(async () => {
       const trayText = `${daysSeen}${t('unit.days')} · ${stageDisplayName(st.stage)} ${t('unit.growth')} ${Math.round(st.growth * 100)}%`;
       if (isDesktop && trayText !== lastTrayLife) {
         lastTrayLife = trayText;
-        void invoke('update_life_info', { text: trayText }).catch(() => { lastTrayLife = ''; });
+        void invoke('update_life_info', { days: daysSeen, stage: st.stage, pct: Math.round(st.growth * 100) }).catch(() => { lastTrayLife = ''; });
       }
     }
 
@@ -641,6 +641,11 @@ onMounted(async () => {
     activeBackend.frame(lifeEngine.getState(), simDt);
   };
   rafId = requestAnimationFrame(loop);
+
+  if (isDesktop && !preview) {
+    void invoke('show_onboarding_if_needed', { existingLife: loaded.ok })
+      .catch((error) => { diag.note = String(error); });
+  }
 
   // 自动存档：30 秒一次 + 页面隐藏/关闭时。
   const save = () => {

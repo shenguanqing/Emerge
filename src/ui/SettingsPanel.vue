@@ -1,54 +1,76 @@
 <script setup lang="ts">
+import { usePaletteAccent } from './usePaletteAccent';
+import SelectControl from './SelectControl.vue';
+import { useSettingsSync } from './useSettingsSync';
 /**
  * 设置面板（独立小窗口，托盘「设置」打开）。
  * 外观 / 行为 / 桌面位置 / 成长 / 怎么积累；连点页脚提示 5 次解锁内置时间加速。
- * 视觉遵循 docs 内 Claude 风格 UX/UI 规范：单一强调色、克制装饰、暖色纸感。
+ * 视觉遵循 docs 内 温暖极简 风格 UX/UI 规范：单一强调色、克制装饰、暖色纸感。
  */
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import {
   COLOR_THEMES,
   DEFAULT_SETTINGS,
+  diffSettings,
   loadSettings,
+  mergeSettingsDraft,
   normalizePosition,
   resolveColors,
-  saveSettings,
+  patchSettings,
   type AppSettings,
   type ColorTheme,
 } from '../core/settings';
 import type { LifeEngine } from '../core/LifeEngine';
-import { invoke, isDesktop, listenNative } from '../platform/desktop';
+import { emitNative, invoke, isDesktop, listenNative } from '../platform/desktop';
 import { locale, localeMode, setLocaleMode, stageDisplayName, t, type LocaleMode } from '../i18n';
 
 const s = reactive<AppSettings>(loadSettings());
+let lastSaved = { ...s };
+let restoringDefaults = false;
+useSettingsSync((patch) => {
+  const next = mergeSettingsDraft(lastSaved, s, patch);
+  lastSaved = next.saved;
+  Object.assign(s, restoringDefaults ? DEFAULT_SETTINGS : next.editing);
+});
 const windowError = ref('');
 
 /** 界面主题：auto 跟随系统，可手动切 light / dark。 */
 type ThemeMode = 'auto' | 'light' | 'dark';
-const themeMode = ref<ThemeMode>(
-  (localStorage.getItem('emerge.ui.theme') as ThemeMode | null) ?? 'auto',
-);
+function readStoredTheme(): ThemeMode {
+  try {
+    const v = localStorage.getItem('emerge.ui.theme');
+    return v === 'light' || v === 'dark' ? v : 'auto';
+  } catch { return 'auto'; }
+}
+const themeMode = ref<ThemeMode>(readStoredTheme());
 const themeOptions = computed(() => [
   { id: 'auto' as ThemeMode, label: t('theme.auto') },
   { id: 'light' as ThemeMode, label: t('theme.light') },
   { id: 'dark' as ThemeMode, label: t('theme.dark') },
 ]);
-function setTheme(mode: ThemeMode): void {
-  themeMode.value = mode;
-  localStorage.setItem('emerge.ui.theme', mode);
-}
+const selectedTheme = computed({
+  get: () => themeMode.value,
+  set: (mode: ThemeMode) => {
+    themeMode.value = mode;
+    try { localStorage.setItem('emerge.ui.theme', mode); } catch { /* 存储不可用时仅本次生效 */ }
+  },
+});
 const themeClass = computed(() =>
   themeMode.value === 'dark' ? 'dark' : themeMode.value === 'light' ? 'light' : '',
 );
 
-/** 界面语言：auto 跟随系统，可手动切 zh / en。 */
+/** 界面语言：auto 跟随系统，可手动切 zh / en / ja / ko。 */
 const langOptions = computed(() => [
   { id: 'auto' as LocaleMode, label: t('lang.auto') },
   { id: 'zh' as LocaleMode, label: '中文' },
   { id: 'en' as LocaleMode, label: 'English' },
+  { id: 'ja' as LocaleMode, label: '日本語' },
+  { id: 'ko' as LocaleMode, label: '한국어' },
 ]);
-function setLang(mode: LocaleMode): void {
-  setLocaleMode(mode);
-}
+const selectedLocale = computed({
+  get: () => localeMode.value,
+  set: setLocaleMode,
+});
 
 /** 隐藏：连点页脚提示 5 次（2.5s 内）解锁时间加速。 */
 const timeUnlocked = ref(false);
@@ -86,10 +108,10 @@ const brightnessPct = computed(() => Math.round(s.brightness * 100));
 const pointScalePct = computed(() => Math.round(s.pointScale * 100));
 const hueDeg = computed(() => Math.round(s.hue));
 
-function emitTauri(event: string, payload: unknown): void {
-  void (window as typeof window & {
-    __TAURI__?: { event?: { emit: (e: string, p: unknown) => Promise<void> } };
-  }).__TAURI__?.event?.emit(event, payload);
+/** 向其它窗口发原生事件；非桌面环境或发送失败时静默忽略。 */
+function send(event: string, payload: unknown): void {
+  if (!isDesktop) return;
+  try { void Promise.resolve(emitNative(event, payload)).catch(() => {}); } catch { /* 忽略 */ }
 }
 
 function onSecretTap(): void {
@@ -111,7 +133,7 @@ function onSecretTap(): void {
 function applyScale(n: number): void {
   currentScale.value = n;
   lastAction.value = t('time.lastScale', { n });
-  emitTauri('time-control', { type: 'scale', value: n });
+  send('time-control', { type: 'scale', value: n });
 }
 
 function timeAction(
@@ -126,7 +148,7 @@ function timeAction(
         : type === 'absence'
           ? t('time.lastAbsence', { n: value })
           : t('time.lastReset');
-  emitTauri('time-control', { type, value });
+  send('time-control', { type, value });
 }
 
 /** 破坏性操作两段确认：第一次点亮确认态，4 秒内再点才执行。 */
@@ -148,22 +170,30 @@ function onResetLife(): void {
 }
 
 function emitSettings(): void {
-  saveSettings({ ...s });
-  const colors = resolveColors(s);
-  if (isDesktop) {
-    emitTauri('visual-settings', {
-      bodyScale: s.bodyScale,
-      brightness: s.brightness,
-      pointScale: s.pointScale,
-      theme: s.theme,
-      hue: s.hue,
-      colors,
-    });
-    emitTauri('desktop-position', { x: s.positionX, y: s.positionY });
-  }
+  const patch = restoringDefaults ? { ...DEFAULT_SETTINGS } : diffSettings(lastSaved, s);
+  restoringDefaults = false;
+  if (!Object.keys(patch).length) return;
+  lastSaved = patchSettings(patch);
+  Object.assign(s, lastSaved);
+  send('app-settings-changed', patch);
+  send('visual-settings', {
+    bodyScale: s.bodyScale,
+    brightness: s.brightness,
+    pointScale: s.pointScale,
+    theme: s.theme,
+    hue: s.hue,
+    colors: resolveColors(s),
+  });
+  send('desktop-position', { x: s.positionX, y: s.positionY });
 }
 
-watch(s, () => emitSettings(), { deep: true });
+/** 拖动滑条时每帧最多落盘 + 通知一次，避免 input 事件洪流。 */
+let emitFrame = 0;
+function scheduleEmit(): void {
+  if (emitFrame) return;
+  emitFrame = requestAnimationFrame(() => { emitFrame = 0; emitSettings(); });
+}
+watch(s, scheduleEmit, { deep: true });
 // 拖动位置不重复抬起设置窗口，避免打断指针捕获。
 let windowUpdate = Promise.resolve();
 watch(() => [s.topmost, s.clickthrough], () => {
@@ -178,8 +208,8 @@ watch(() => [s.topmost, s.clickthrough], () => {
   });
 }, { immediate: true });
 
-const screenWidth = window.screen.width;
-const screenHeight = window.screen.height;
+const screenWidth = window.screen?.width ?? 16;
+const screenHeight = window.screen?.height ?? 10;
 const placing = ref(false);
 function movePlacement(event: PointerEvent): void {
   if (!placing.value) return;
@@ -202,10 +232,35 @@ function keyPlacement(event: KeyboardEvent): void {
   s.positionY = normalizePosition(s.positionY + direction[1] * 0.01);
 }
 
-function reset(): void {
-  Object.assign(s, DEFAULT_SETTINGS);
-  emitSettings();
+async function replayWelcome(): Promise<void> {
+  if (!isDesktop) { location.href = '?window=welcome'; return; }
+  try { await invoke('open_onboarding'); }
+  catch (error) { windowError.value = String(error); }
 }
+
+/** 「恢复默认」同样两段确认：第一次点亮确认态，4 秒内再点才执行。 */
+const confirmDefaults = ref(false);
+let defaultsArmTimer = 0;
+const confirmDefaultsLabel = computed(() => t('settings.resetConfirm'));
+function reset(): void {
+  if (!confirmDefaults.value) {
+    confirmDefaults.value = true;
+    clearTimeout(defaultsArmTimer);
+    defaultsArmTimer = window.setTimeout(() => { confirmDefaults.value = false; }, 4000);
+    return;
+  }
+  clearTimeout(defaultsArmTimer);
+  confirmDefaults.value = false;
+  restoringDefaults = true;
+  Object.assign(s, DEFAULT_SETTINGS);
+  scheduleEmit();
+}
+
+const themeName = computed(() => (s.theme === 'custom' ? t('palette.custom') : t(`theme.${s.theme}`)));
+
+/** 成长路径：点击阶段节点预览该阶段说明，默认停在当前阶段。 */
+const viewStage = ref<number | null>(null);
+const shownStage = computed(() => viewStage.value ?? stageIndex.value);
 
 function swatchColor(body: [number, number, number]): string {
   return `rgb(${body.map((c) => Math.round(c * 255)).join(',')})`;
@@ -224,32 +279,40 @@ function sliderFill(value: number, min: number, max: number): Record<string, str
   return { '--fill': `${pct}%` };
 }
 
+const unlistens: Array<() => void> = [];
+let disposed = false;
+
 onMounted(() => {
   void listenNative<{ vnow: string; scale: number; growth: ReturnType<LifeEngine['getGrowthSummary']> }>('clock-state', (c) => {
     vnow.value = c.vnow;
     currentScale.value = c.scale;
     growthInfo.value = c.growth;
-  });
-  // 语言在设置窗（独立 WebView）里切换：同步到托盘/设置窗标题与主窗界面。
-  if (isDesktop) {
-    void invoke('set_ui_locale', { locale: locale.value }).catch(() => {});
-    watch(locale, (loc) => {
-      void invoke('set_ui_locale', { locale: loc }).catch(() => {});
-    });
-  }
-  watch(localeMode, (mode) => {
-    emitTauri('ui-locale-changed', mode);
-  });
+  }).then((un) => { if (disposed) un(); else unlistens.push(un); });
 });
 
+// 语言在设置窗（独立 WebView）里切换：同步到托盘/设置窗标题与主窗界面。
+if (isDesktop) {
+  void invoke('set_ui_locale', { locale: locale.value }).catch(() => {});
+  watch(locale, (loc) => {
+    void invoke('set_ui_locale', { locale: loc }).catch(() => {});
+  });
+}
+watch(localeMode, (mode) => send('ui-locale-changed', mode));
+
 onBeforeUnmount(() => {
+  disposed = true;
+  for (const un of unlistens) un();
+  // 关窗前把尚未发出的改动落下，避免丢最后一次拖动。
+  if (emitFrame) { cancelAnimationFrame(emitFrame); emitFrame = 0; emitSettings(); }
   clearTimeout(tapTimer);
   clearTimeout(resetArmTimer);
+  clearTimeout(defaultsArmTimer);
 });
+const accentStyle = usePaletteAccent(s, () => themeMode.value);
 </script>
 
 <template>
-  <div class="page" :class="themeClass">
+  <div class="page" :class="themeClass" :style="accentStyle">
     <header class="top">
       <div class="top-copy">
         <h1>{{ t('settings.title') }}</h1>
@@ -257,44 +320,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <section class="card" aria-labelledby="general-title">
-      <h2 id="general-title">{{ t('section.general') }}</h2>
-      <div class="top-actions">
-        <div class="general-row">
-          <span>{{ t('lang.label') }}</span>
-          <div class="segmented" role="group" :aria-label="t('lang.label')">
-            <button
-              v-for="opt in langOptions"
-              :key="opt.id"
-              type="button"
-              class="seg"
-              :class="{ on: localeMode === opt.id }"
-              :aria-pressed="localeMode === opt.id"
-              @click="setLang(opt.id)"
-            >
-              {{ opt.label }}
-            </button>
-          </div>
-        </div>
-        <div class="general-row">
-          <span>{{ t('theme.label') }}</span>
-          <div class="segmented" role="group" :aria-label="t('theme.label')">
-            <button
-              v-for="opt in themeOptions"
-              :key="opt.id"
-              type="button"
-              class="seg"
-              :class="{ on: themeMode === opt.id }"
-              :aria-pressed="themeMode === opt.id"
-              @click="setTheme(opt.id)"
-            >
-              {{ opt.label }}
-            </button>
-          </div>
-        </div>
-        <button type="button" class="btn-text" @click="reset">{{ t('settings.reset') }}</button>
-      </div>
-    </section>
+
 
     <section class="card">
       <h2>{{ t('section.appearance') }}</h2>
@@ -353,8 +379,9 @@ onBeforeUnmount(() => {
       <div class="field">
         <div class="label-row">
           <span id="swatch-label">{{ t('appearance.palette') }}</span>
+          <span class="value-text">{{ themeName }}</span>
         </div>
-        <div class="swatches" role="listbox" aria-labelledby="swatch-label">
+        <div class="swatches" role="group" aria-labelledby="swatch-label">
           <button
             v-for="theme in COLOR_THEMES"
             :key="theme.id"
@@ -363,7 +390,7 @@ onBeforeUnmount(() => {
             :class="{ on: s.theme === theme.id }"
             :title="t(`theme.${theme.id}`)"
             :aria-label="t(`theme.${theme.id}`)"
-            :aria-selected="s.theme === theme.id"
+            :aria-pressed="s.theme === theme.id"
             :style="swatchStyle(theme)"
             @click="s.theme = theme.id"
           />
@@ -373,7 +400,7 @@ onBeforeUnmount(() => {
             :class="{ on: s.theme === 'custom' }"
             :title="t('palette.custom')"
             :aria-label="t('palette.custom')"
-            :aria-selected="s.theme === 'custom'"
+            :aria-pressed="s.theme === 'custom'"
             @click="s.theme = 'custom'"
           >
             <span class="hue-dot" />
@@ -413,6 +440,7 @@ onBeforeUnmount(() => {
           id="toggle-topmost"
           v-model="s.topmost"
           type="checkbox"
+          role="switch"
           class="switch"
           :aria-label="t('behavior.topmost')"
         />
@@ -427,6 +455,7 @@ onBeforeUnmount(() => {
           id="toggle-clickthrough"
           v-model="s.clickthrough"
           type="checkbox"
+          role="switch"
           class="switch"
           :aria-label="t('behavior.clickthrough')"
         />
@@ -499,73 +528,69 @@ onBeforeUnmount(() => {
       </template>
       <p v-else class="note plain">{{ t('growth.waiting') }}</p>
 
-      <div class="stage-path" :aria-label="t('section.growth')">
-        <div
+      <div class="stage-path" role="group" :aria-label="t('section.growth')">
+        <button
           v-for="(st, i) in STAGES"
           :key="st.id"
+          type="button"
           class="stage-node"
-          :class="{ on: growthInfo ? i <= stageIndex : false, now: growthInfo ? i === stageIndex : false }"
+          :class="{ on: growthInfo ? i <= stageIndex : false, now: growthInfo ? i === stageIndex : false, picked: i === shownStage }"
+          :aria-pressed="i === shownStage"
+          @click="viewStage = i"
         >
-          <div class="stage-track">
-            <span class="stage-dot" />
-          </div>
-          <div class="stage-name">{{ st.name }}</div>
-          <div class="stage-range">{{ st.range }}</div>
-        </div>
+          <span class="stage-track"><span class="stage-dot" /></span>
+          <span class="stage-name">{{ st.name }}</span>
+          <span class="stage-range">{{ st.range }}</span>
+        </button>
       </div>
-      <ul class="stage-legend">
-        <li v-for="st in STAGES" :key="st.id">
-          <strong>{{ st.name }}</strong>
-          <span>{{ st.desc }}</span>
-        </li>
-      </ul>
-    </section>
+      <p class="stage-desc" aria-live="polite">
+        <strong>{{ STAGES[shownStage].name }}</strong>{{ STAGES[shownStage].desc }}
+      </p>
 
-    <section class="card">
-      <h2>{{ t('section.paths') }}</h2>
-      <ul class="path-list">
-        <li v-for="p in PATHS" :key="p.name">
-          <strong>{{ p.name }}</strong>
-          <span>{{ p.desc }}</span>
-        </li>
-      </ul>
-      <p class="note plain">{{ t('paths.note') }}</p>
+      <details class="paths">
+        <summary>{{ t('section.paths') }}</summary>
+        <ul class="path-list">
+          <li v-for="p in PATHS" :key="p.name">
+            <strong>{{ p.name }}</strong>
+            <span>{{ p.desc }}</span>
+          </li>
+        </ul>
+        <p class="note plain">{{ t('paths.note') }}</p>
+      </details>
     </section>
 
     <section v-if="timeUnlocked" class="card time-card">
       <h2>{{ t('section.time') }}</h2>
 
-      <div class="field">
-        <div class="label-row">
-          <span>{{ t('time.virtual') }}</span>
-          <span class="vnow" aria-live="polite">{{ vnow }}（×{{ currentScale }}）</span>
+      <div class="clock">
+        <div class="clock-copy">
+          <span class="clock-label">{{ t('time.virtual') }}</span>
+          <span class="clock-time" aria-live="polite">{{ vnow }}</span>
         </div>
-        <div class="pills">
-          <button
-            v-for="n in scales"
-            :key="n"
-            type="button"
-            class="pill"
-            :class="{ on: currentScale === n }"
-            :aria-pressed="currentScale === n"
-            @click="applyScale(n)"
-          >
-            ×{{ n }}
-          </button>
-        </div>
+        <span class="clock-scale">×{{ currentScale }}</span>
       </div>
 
-      <div class="pills actions">
-        <button type="button" class="pill" @click="timeAction('advance', 1)">{{ t('time.advance1') }}</button>
-        <button type="button" class="pill" @click="timeAction('interaction', 60)">
-          {{ t('time.interaction60') }}
+      <div class="segmented scales" role="group" :aria-label="t('time.virtual')">
+        <button
+          v-for="n in scales"
+          :key="n"
+          type="button"
+          class="seg"
+          :class="{ on: currentScale === n }"
+          :aria-pressed="currentScale === n"
+          @click="applyScale(n)"
+        >
+          ×{{ n }}
         </button>
-        <button type="button" class="pill" @click="timeAction('absence', 3)">
-          {{ t('time.absence3') }}
-        </button>
+      </div>
+
+      <div class="time-actions">
+        <button type="button" class="btn-outline" @click="timeAction('advance', 1)">{{ t('time.advance1') }}</button>
+        <button type="button" class="btn-outline" @click="timeAction('interaction', 60)">{{ t('time.interaction60') }}</button>
+        <button type="button" class="btn-outline" @click="timeAction('absence', 3)">{{ t('time.absence3') }}</button>
         <button
           type="button"
-          class="pill danger"
+          class="btn-outline danger"
           :class="{ armed: confirmReset }"
           :title="confirmReset ? undefined : t('time.resetTitle')"
           @click="onResetLife"
@@ -575,6 +600,26 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="lastAction" role="status" class="note ok">{{ lastAction }} ✓</p>
       <p v-else class="note plain">{{ t('time.hint') }}</p>
+    </section>
+
+
+
+    <section class="card" aria-labelledby="general-title">
+      <h2 id="general-title">{{ t('section.general') }}</h2>
+      <div class="general-row">
+        <label id="select-language-label" for="select-language">{{ t('lang.label') }}</label>
+        <SelectControl id="select-language" v-model="selectedLocale" :options="langOptions" />
+      </div>
+      <div class="general-row">
+        <label id="select-theme-label" for="select-theme">{{ t('theme.label') }}</label>
+        <SelectControl id="select-theme" v-model="selectedTheme" :options="themeOptions" />
+      </div>
+      <div class="actions-row general-actions">
+        <button type="button" class="btn-outline" @click="replayWelcome">{{ t('welcome.replay') }}</button>
+        <button type="button" class="btn-text" :class="{ armed: confirmDefaults }" @click="reset">
+          {{ confirmDefaults ? confirmDefaultsLabel : t('settings.reset') }}
+        </button>
+      </div>
     </section>
 
     <p
@@ -590,7 +635,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* ===== Design Tokens：Claude 风格规范（浅色默认，深色见下方覆盖） ===== */
+/* ===== Design Tokens：温暖极简 风格规范（浅色默认，深色见下方覆盖） ===== */
 .page {
   --bg-page: #faf9f5;
   --bg-surface: #ffffff;
@@ -603,7 +648,7 @@ onBeforeUnmount(() => {
   --accent: #d97757;
   --accent-hover: #c6613f;
   /* 浅底上的强调色文字用更深的 hover 档，保证对比度 */
-  --accent-text: #c6613f;
+  --accent-text: #a85e43;
   --accent-soft: rgba(217, 119, 87, 0.12);
   --danger: #b53333;
   --danger-soft: rgba(181, 51, 51, 0.1);
@@ -625,6 +670,7 @@ onBeforeUnmount(() => {
     sans-serif;
 
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
   padding: 24px 20px 32px;
   box-sizing: border-box;
@@ -702,13 +748,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.top-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-}
-
 .general-row {
   display: flex;
   align-items: center;
@@ -716,9 +755,8 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px;
 }
-
-.top-actions > .btn-text {
-  align-self: flex-end;
+.general-row + .general-row {
+  margin-top: 12px;
 }
 
 .eyebrow {
@@ -738,21 +776,26 @@ h1 {
   color: var(--text-primary);
 }
 
-/* 分段控件：灰底轨道 + 选中白底轻边框 */
+/* 分段控件：灰底轨道 + 选中白底轻边框；轨道统一 30px 高 */
 .segmented {
   display: inline-flex;
+  height: 30px;
   padding: 2px;
   border-radius: var(--radius-md);
   background: var(--bg-sunken);
   gap: 2px;
+  box-sizing: border-box;
 }
 
 .seg {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
   font: 12px/18px var(--font-ui);
-  padding: 4px 10px;
+  padding: 0 12px;
   border-radius: 8px;
   cursor: pointer;
   transition:
@@ -789,6 +832,56 @@ h1 {
 }
 .btn-text:active {
   transform: scale(0.98);
+}
+.btn-text.armed {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+/* 描边按钮（重新查看欢迎引导等次要入口）：细边框，悬停轻强调 */
+.btn-outline {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: 13px/18px var(--font-ui);
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease),
+    background 0.14s var(--ease),
+    transform 0.12s var(--ease);
+}
+.btn-outline:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.btn-outline:active {
+  transform: scale(0.98);
+}
+
+.general-actions {
+  justify-content: space-between;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.general-actions > button {
+  box-sizing: border-box;
+  height: 30px;
+  min-height: 30px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ===== 卡片：白底 + 1px 边框 + 圆角 12，无阴影，悬停边框加深 ===== */
@@ -844,17 +937,12 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
-.vnow {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
 .slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
   height: 16px;
+  margin: 0;
   background: transparent;
   cursor: pointer;
 }
@@ -1055,8 +1143,18 @@ h2 {
 }
 
 .stage-node {
-  text-align: center;
+  display: block;
   min-width: 0;
+  padding: 2px 0 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.stage-name,
+.stage-range {
+  display: block;
 }
 
 .stage-track {
@@ -1120,6 +1218,8 @@ h2 {
 }
 
 .stage-range {
+  position: relative;
+  padding-bottom: 7px;
   margin-top: 1px;
   font-size: 11px;
   line-height: 16px;
@@ -1127,14 +1227,12 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
-.stage-legend,
 .path-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.stage-legend li,
 .path-list li {
   display: grid;
   /* 固定列宽：所有说明文字左对齐（auto 会按行内最长名称各自缩进）；
@@ -1148,71 +1246,143 @@ h2 {
   line-height: 20px;
 }
 
-.stage-legend li:first-child,
 .path-list li:first-child {
   border-top: none;
   padding-top: 2px;
 }
 
-.stage-legend strong,
 .path-list strong {
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
 }
 
-.stage-legend span,
 .path-list span {
   color: var(--text-secondary);
 }
 
-/* ===== 时间加速（隐藏功能卡：样式与普通卡片一致，克制装饰） ===== */
-.pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 8px 0 4px;
-}
-.pill {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-surface);
+/* 预览中的阶段：名称加粗转主色 + 下方一根短横线；不加底色块 */
+.stage-node:hover .stage-name {
   color: var(--text-primary);
-  font: 12px/18px var(--font-ui);
-  cursor: pointer;
-  transition:
-    background 0.14s var(--ease),
-    border-color 0.14s var(--ease),
-    color 0.14s var(--ease),
-    transform 0.12s var(--ease);
 }
-.pill:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-sunken);
-}
-.pill:active {
-  transform: scale(0.98);
-}
-/* 选中态：浅橙底 + 橙色文字，不整行填充（规范：橙色面积克制） */
-.pill.on {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  color: var(--accent-text);
+.stage-node.picked .stage-name {
+  color: var(--text-primary);
   font-weight: 600;
 }
-.pill.danger {
+.stage-node.picked.now .stage-name {
+  color: var(--accent-text);
+}
+.stage-node.picked .stage-range::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 16px;
+  height: 2px;
+  margin-left: -8px;
+  border-radius: 2px;
+  background: var(--text-primary);
+}
+.stage-node.picked.now .stage-range::after {
+  background: var(--accent);
+}
+
+.stage-desc {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+.stage-desc strong {
+  margin-right: 8px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.paths {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+.paths summary {
+  padding: 10px 0 6px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.paths .note.plain {
+  margin-top: 8px;
+}
+
+/* ===== 时间加速（隐藏功能卡）：时钟读数 + 倍速分段 + 2×2 操作 ===== */
+.clock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: var(--bg-sunken);
+}
+.clock-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.clock-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-tertiary);
+}
+.clock-time {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.clock-scale {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.scales {
+  display: flex;
+  width: 100%;
+}
+.scales .seg {
+  flex: 1;
+  justify-content: center;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+.time-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.time-actions .btn-outline {
+  min-height: 36px;
+  padding: 6px 10px;
+  text-align: center;
+}
+.btn-outline.danger {
   border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   color: var(--danger);
 }
-.pill.danger:hover {
+.btn-outline.danger:hover {
   background: var(--danger-soft);
   border-color: var(--danger);
+  color: var(--danger);
 }
-.pill.danger.armed {
+.btn-outline.danger.armed {
   background: var(--danger);
   border-color: var(--danger);
   color: #ffffff;
@@ -1334,10 +1504,10 @@ h2 {
 .placement-marker {
   position: absolute;
   transform: translate(-50%, -50%);
-  color: #d97757;
+  color: var(--accent);
   font-size: 24px;
   line-height: 1;
-  text-shadow: 0 0 12px rgba(217, 119, 87, 0.45);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
   pointer-events: none;
 }
 
@@ -1387,6 +1557,29 @@ h2 {
   .page *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 440px) {
+  .btn-text,
+  .btn-outline {
+    min-height: 44px;
+  }
+}
+</style>
+
+<style>
+/* 窗口级 color-scheme：浅色纸面用浅色滚动条等原生控件，覆盖 index.html 的全局 dark。
+   主题类挂在本组件根节点，:has 跟随浅/深切换（含 auto 跟随系统）。 */
+html.settings-window {
+  color-scheme: light;
+}
+html.settings-window:has(.page.dark) {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html.settings-window:not(:has(.page.light)) {
+    color-scheme: dark;
   }
 }
 </style>

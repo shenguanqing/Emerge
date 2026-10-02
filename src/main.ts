@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import SettingsPanel from './ui/SettingsPanel.vue';
+import WelcomePanel from './ui/WelcomePanel.vue';
 
 // 运行期错误收集：供诊断条与自动化验证读取（上限 50 条，避免长期运行堆积）。
 const emerge = window as typeof window & { __emergeErrors?: string[] };
@@ -23,7 +24,10 @@ function isSettingsWindow(): boolean {
   return tauriWin?.getCurrent?.()?.label === 'settings';
 }
 
-if (isSettingsWindow()) {
+if (new URLSearchParams(window.location.search).get('window') === 'welcome') {
+  document.documentElement.classList.add('settings-window');
+  createApp(WelcomePanel).mount('#app');
+} else if (isSettingsWindow()) {
   // 设置窗：解除主 App 的 overflow:hidden，允许滚动。
   document.documentElement.classList.add('settings-window');
   createApp(SettingsPanel).mount('#app');

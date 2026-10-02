@@ -96,7 +96,7 @@ export class BehaviorEngine {
 
     // ---- 指针排斥乘数：信任 + 好奇 → 温和靠近；受惊 → 加强保持距离 ----
     const familiarity = clamp01(emotion.trust * (0.4 + 0.6 * this.curious));
-    const pointerPushMul = clamp01(1 - 0.45 * familiarity + this.scared * 0.5);
+    const pointerPushMul = Math.min(1.5, Math.max(0.55, 1 - 0.45 * familiarity + this.scared * 0.5));
 
     return {
       calm: this.calm,

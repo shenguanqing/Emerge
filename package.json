@@ -11,7 +11,8 @@
     "app:dev": "tauri dev",
     "test:core": "node --import tsx --test src/core/*.test.ts",
     "test:audio": "node --import tsx --test src/input/audio-system.test.ts",
-    "test:input": "node --import tsx --test src/input/*.test.ts"
+    "test:input": "node --import tsx --test src/input/*.test.ts",
+    "test:i18n": "node --import tsx --test src/i18n/*.test.ts"
   },
   "dependencies": {
     "three": "^0.186.1",

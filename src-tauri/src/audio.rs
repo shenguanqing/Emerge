@@ -1,3 +1,4 @@
+use crate::locale::{self, tr};
 use std::sync::Mutex;
 use serde::Serialize;
 
@@ -28,14 +29,14 @@ pub fn system_audio_start() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let mut reading = READING.lock().map_err(|e| e.to_string())?;
-        if reading.status != 0 { return Err("请先停止当前系统音频监听".into()); }
+        if reading.status != 0 { return Err(tr("error.audioAlreadyActive").into()); }
         reading.status = 2;
         if let Ok(mut error) = ERROR.lock() { error.clear(); }
         unsafe { emerge_audio_start(receive, failure); }
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
-    Err("当前平台尚未实现系统音频捕获，请选择音乐文件".into())
+    Err(tr("error.audioUnsupported").into())
 }
 #[tauri::command]
 pub fn system_audio_stop() {
@@ -54,13 +55,9 @@ pub fn system_audio_read(app: tauri::AppHandle) -> Result<AudioReading, String> 
     let mut reading = READING.lock().map(|r| *r).map_err(|e| e.to_string())?;
     if reading.status < 0 {
         let message = ERROR.lock().map_err(|e| e.to_string())?.clone();
-        // 原生层已写好可操作的中文原因，这里直接透传，不再二次包装。
-        super::update_audio_info(&app, &format!("{}{}", super::l("系统声音：", "System audio: "), if message.is_empty() { super::l("捕获失败，请检查权限", "capture failed — check permissions") } else { &message }), true);
-        return Err(if message.is_empty() {
-            "无法监听系统声音。请在 系统设置 → 隐私与安全性 → 屏幕与系统音频录制 中允许 Emerge 后重试。".into()
-        } else {
-            message
-        });
+        let message = locale::audio_error(&message);
+        super::update_audio_info(&app, &locale::format("native.audioError", &[("e", &message)]), true);
+        return Err(message);
     }
     // 捕获停止发送样本时不能把最后一帧声音无限计为音乐成长。
     if reading.updated_at.map_or(true, |at| at.elapsed().as_millis() > 500) {
@@ -69,11 +66,11 @@ pub fn system_audio_read(app: tauri::AppHandle) -> Result<AudioReading, String> 
     let label = match reading.status {
         1 => {
             let energy = (reading.bass * 0.4 + reading.mid * 0.4 + reading.treble * 0.2) * 100.;
-            if energy < 1. { super::l("系统声音：已连接，等待声音", "System audio: connected, waiting for sound").to_string() }
-            else { format!("{} · {} {:.0}%", super::l("系统声音：正在接收", "System audio: receiving"), super::l("能量", "energy"), energy) }
+            if energy < 1. { tr("native.audioWaiting").to_string() }
+            else { locale::format("native.audioReceiving", &[("energy", &format!("{energy:.0}"))]) }
         },
-        2 => super::l("系统声音：正在启动…", "System audio: starting…").to_string(),
-        _ => super::l("系统声音：未开启", "System audio: off").to_string(),
+        2 => tr("native.audioStarting").to_string(),
+        _ => tr("native.audioOff").to_string(),
     };
     super::update_audio_info(&app, &label, false);
     Ok(reading)
@@ -88,10 +85,10 @@ pub fn open_screen_recording_settings() -> Result<(), String> {
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("无法打开系统设置：{e}"))
+            .map_err(|e| locale::format("error.openPrivacy", &[("e", &e.to_string())]))
     }
     #[cfg(not(target_os = "macos"))]
-    Err("当前平台无需该设置项".into())
+    Err(tr("error.privacyUnsupported").into())
 }
 
 /// 系统「正在播放」曲名；取不到返回空字符串。

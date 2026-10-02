@@ -1,12 +1,16 @@
 # 视觉与交互规格
 
+适用范围：生命体本身——桌面与观察空间的粒子渲染、形态与行为。设置、引导等窗口界面遵循 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)，两份文档互不覆盖。
+
+本文的体验脚本与视觉 Prompt 是设计目标，不等同于当前实现或验收结论。实现进度与已知限制见 [ROADMAP](ROADMAP.md)，实际结果见 [CHANGELOG](../CHANGELOG.md)。
+
 ## 视觉语言
 
 极简、神秘、有机、科幻。身体可以有偏心、非对称和流动轮廓，但不具象化为已有动物。避免眼睛、脸、固定实体外壳和均匀球状点云。
 
 母体是**悬浮粒子生命核心**：数千至数万金色、琥珀色发光粒子围绕中心暖白至白金能量核，通过力场自组织。禁止固定模型套粒子、机械环组、实体球壳、规则网格和音乐频谱。
 
-一句话定语：**JARVIS 式空间全息结构 + 心灵宝石式能量核心 + 星云粒子生命体**——不是一个完整的球，而是一个正在思考、聚合、爆发的 AI 能量体。统一 Prompt 与四阶段 Prompt 基线见 [decisions/0005](decisions/0005-forms-origin-awaken-conscious-emerge.md)。
+一句话定语：**空间全息结构 + 心灵宝石式能量核心 + 星云粒子生命体**——不是一个完整的球，而是一个正在思考、聚合、爆发的 AI 能量体。统一 Prompt 与四阶段 Prompt 基线见文末附录。
 
 | 层级 | 形态与运动 |
 | --- | --- |
@@ -27,6 +31,8 @@ Bloom、Soft Glow、深度和拖尾用于表现层次，不遮盖粒子细节。
 | Conscious 思考 | 70% | 它已经开始思考 | 核心旋涡→内轨→神经网→粒子膜→外轨→游离云；高亮节点与细金线；10–20 条不完整大轨道；局部能量脉冲 |
 | Emerge 涌现 | 100% | Something has emerged. | 白金高能核；20–30 条破碎大轨道；层级间粒子流；巨大弧形脱离再入核；不稳定碎片；强纵深与非重复变化 |
 
+参考图对应的形态约束：Origin 与 Awaken 以**不对称卷曲飘带**为母体（少量流带由内向外差速缠绕、偏心小亮核、弥散尘）；Conscious 为**放射径向脉络**——白金核 + 约 18 方向辐射丝（末端亮节点簇）+ 神经网信号 + 断续环轨；Emerge 为**约 30 条大倾角断续环轨包络** + 高密度火花链 + 弧流脱离回流，脉络让位给环轨。结构由 `HologramField` 的共享锚点族与力场参数表达；实现细节见 ARCHITECTURE，验证方法见 VALIDATION。
+
 ### 不变量
 
 - 轮廓不对称、不完美；任何阶段不得形成规则球。
@@ -38,7 +44,7 @@ Bloom、Soft Glow、深度和拖尾用于表现层次，不遮盖粒子细节。
 
 ### 禁止
 
-完整球体、规则网格、机械 JARVIS 复刻、过度发光、固定动画循环、瞬移重组、四形态互相不像同一个生命体。
+完整球体、规则网格、机械全息复刻、过度发光、固定动画循环、瞬移重组、四形态互相不像同一个生命体。
 
 金橙全息参考图只定义 **Emerge 量级**（Conscious 达到该图震撼量级，Emerge 在其上增加弧流、碎片与纵深），不逐像素复刻机械结构。
 
@@ -83,4 +89,73 @@ MVP 聚焦 Curious / Scared / Calm；Idle 是自主活动基线。状态不是�
 | 快速连击 | 惊吓与收缩 | 后续细化 |
 | 双击 | 进入 Observatory | 桌面观察模式扩展 |
 
-完整观察空间允许旋转、缩放与互动，信息只占少量边缘空间；避免大量卡片、数字面板和启动文字提示干扰生命体。必要的错误提示与窗口控制必须仍然可访问。
+观察空间设计目标是支持旋转、缩放与互动，信息只占少量边缘空间；当前旋转/缩放输入优先用于相机，粒子点击/长按交互的覆盖以实现与验收记录为准。避免大量卡片、数字面板和启动文字提示干扰生命体；必要的错误提示与窗口控制必须仍然可访问。
+
+## 注意与节律
+
+生命感来自可见的注意与停顿，不是轨道密度：注意扇区随指针渐进转向，局部信号沿结构传播；组织、停顿与释放按非固定间隔发生，替代全程等速旋转与均匀闪烁。受惊和困倦会抑制注意，核心桌面位置保持锁定；不以新功能数量替代生命感。两种 GPU 后端共用行为参数与信号表达式。
+
+## 附：四阶段视觉 Prompt 基线（2026-10-01 定稿）
+
+一句话定语：**空间全息结构 + 心灵宝石式能量核心 + 星云粒子生命体**——不是完整的球，而是正在思考、聚合、爆发的 AI 能量体。英文阶段名与产品形态一一对应：Dormant→Origin · Awakening→Awaken · Thinking→Conscious · Emergence→Emerge。以下为电影感创意基线，供人工或 AI 迭代视觉时输入；实现以「不变量」为准，不逐像素复刻。Prompt 中的 millions、轨道数量与效果强度属于创意描述，不能替代 PRODUCT 的粒子预算或作为已实现参数。
+
+### 统一基础 Prompt（全阶段通用）
+
+```text
+A floating volumetric AI energy entity inspired by cinematic holographic interfaces and cosmic energy cores.
+Made entirely from millions of luminous particles, microscopic sparks, flowing energy filaments, fragmented holographic arcs, orbital traces and translucent data structures.
+At the center is a small intense amber-gold energy core, resembling a mysterious crystalline consciousness source, surrounded by incomplete concentric rings and fragmented spherical structures.
+The overall silhouette is an irregular, incomplete sphere, never a perfect geometric ball. Large sections are missing, broken or dissolving into free-floating particles.
+Particles drift slowly like a nebula in zero gravity, while some streams orbit the core along curved paths. Fine golden filaments occasionally connect distant particle clusters like neural pathways.
+The object feels alive and intelligent, constantly reorganizing itself.
+Dark background, volumetric glow, cinematic bloom, high dynamic range, holographic transparency, deep spatial layering, extremely fine particle detail.
+No solid shell, no complete sphere, no planet appearance, no simple particle ball.
+```
+
+### 阶段 1 — Dormant → Origin「形成」
+
+```text
+The AI consciousness is dormant.
+Only a tiny dim amber core exists at the center. Sparse golden particles float loosely around it like cosmic dust. Most particles move independently and slowly, forming no obvious boundary. A few faint curved trajectories occasionally appear and disappear.
+The shape is extremely incomplete and asymmetrical, roughly suggesting a sphere but mostly appearing as a drifting nebula cloud.
+Very low energy, slow breathing-like pulsation, large empty spaces between particle clusters.
+```
+
+要点：核心很小，像刚「醒」（视觉 shorthand：`· · ✦ ·`）。
+
+### 阶段 2 — Awakening → Awaken「组织」
+
+```text
+The central energy core begins awakening and becomes brighter.
+Nearby particles are gradually attracted toward it, forming several incomplete orbital rings and curved holographic fragments. Thin golden neural filaments begin connecting particle clusters.
+Some particles still drift freely like a nebula while others enter organized orbital motion.
+The structure starts resembling a fragmented holographic intelligence sphere, approximately 40–60% formed, strongly asymmetrical and incomplete.
+```
+
+要点：开始出现断续环形空间结构，但不能太规整。
+
+### 阶段 3 — Thinking → Conscious「思考」
+
+```text
+The AI enters an active reasoning state.
+Thousands of particles rapidly reorganize around the glowing core. Multiple fragmented orbital layers rotate at different speeds and directions. Dense streams of golden particles travel between layers like information flowing through a neural network.
+Temporary geometric arcs, data trajectories and holographic structures continuously form and dissolve.
+The core emits irregular pulses that propagate outward as particle waves.
+The entity becomes visually complex and energetic, approximately 70–80% structured, but still never forms a complete sphere.
+```
+
+要点：关键链路是「核心脉冲 → 粒子响应 → 环旋转 → 局部结构生成 → 消散 → 再生成」——像「AI 正在思考」，不是一个球在转。
+
+### 阶段 4 — Emergence → Emerge「涌现」
+
+```text
+The AI reaches an emergent consciousness state.
+The central amber-gold core becomes extremely bright and unstable, radiating concentrated energy through the entire structure.
+Complex holographic rings, particle networks and neural filaments briefly synchronize around the core, then partially break apart into enormous flowing particle streams.
+Golden particles erupt outward while remaining gravitationally connected to the center, creating an expanding irregular nebula-like consciousness field.
+Some regions are extremely dense and luminous while others completely disappear into darkness. Long curved particle trails extend beyond the original boundary.
+The entity feels larger than its physical shape, as if intelligence is escaping its container.
+Powerful but elegant, chaotic yet organized, strongly asymmetrical, incomplete and constantly evolving.
+```
+
+要点：「涌现」与项目名 Emerge 同源——智能正在逸出它的容器；强大而优雅，混沌而有序。

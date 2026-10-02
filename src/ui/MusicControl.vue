@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
         <button v-if="!systemListening && (sourceStatus === 'file' || sourceStatus === 'paused')" type="button" :disabled="busy" @click="togglePlayback">{{ t(sourceStatus === 'file' ? 'music.pause' : 'music.play') }}</button>
         <button type="button" :disabled="fileControlsDisabled || sourceStatus === 'off'" @click="stopMusic">{{ t('music.stop') }}</button>
       </div>
-      <p v-if="musicError" class="music-error" role="alert">{{ musicError }}</p>
+      <p v-if="musicError" class="music-error" role="alert">{{ t('music.error', { e: musicError }) }}</p>
     </section>
   </Teleport>
 </template>

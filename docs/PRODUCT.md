@@ -1,12 +1,14 @@
 # 产品定义
 
+本文定义产品目标与范围，包含尚未实现或验收的能力；当前推进与平台验证状态见 [ROADMAP](ROADMAP.md)，实际变更与结果见 [CHANGELOG](../CHANGELOG.md)。
+
 ## 愿景
 
 Emerge 是生活在用户设备里的抽象数字生命。它没有固定物种、面孔或实体模型。用户先被视觉吸引，再通过交互感受到行为与情绪，长期使用后形成独特的生命形态。
 
 视觉参考星云、深海生命、磁流体、极光与微生物，最终形成原创语言。不可退化为普通粒子球、屏保、Shader 展示或音乐频谱。
 
-形态母体是**悬浮粒子生命核心**：金色粒子围绕能量核心自组织，四阶段只改变结构复杂度与状态，不换成四套外形。完整规格见 [VISUAL_INTERACTION.md](VISUAL_INTERACTION.md) 与 [decisions/0005-forms-origin-awaken-conscious-emerge.md](decisions/0005-forms-origin-awaken-conscious-emerge.md)。
+形态母体是**悬浮粒子生命核心**：金色粒子围绕能量核心自组织，四阶段只改变结构复杂度与状态，不换成四套外形。完整规格与四阶段视觉 Prompt 基线见 [VISUAL_INTERACTION.md](VISUAL_INTERACTION.md)。
 
 ## 平台与体验
 
@@ -19,6 +21,8 @@ Emerge 是生活在用户设备里的抽象数字生命。它没有固定物种�
 
 完整桌面体验包括置顶、鼠标穿透、位置锁定、自由移动和双模式切换。MVP 先交付透明桌面窗口与可用的交互/退出入口；其余桌面控制逐项验证和推进，不视为已完成。
 
+桌面常驻目标：用户从虚拟桌面 A 切换到 B 时，同一个粒子生命体继续显示在当前桌面，沿用摆放位置、身份和成长记录；用户主动隐藏后保持隐藏。设置与欢迎引导采用普通辅助窗口归属，不要求复制到全部桌面。全屏应用独立空间与多显示器独立桌面分别验证，平台覆盖以 ROADMAP 为准。
+
 ## 首轮 MVP
 
 1. 单生命体，20k–100k GPU 粒子，Core / Body / Aura 三层可辨。
@@ -28,9 +32,11 @@ Emerge 是生活在用户设备里的抽象数字生命。它没有固定物种�
 5. Web Demo 与 macOS / Windows 透明桌面窗口。
 6. FPS 自动质量调整及常驻低功耗策略。
 
-起始约 20k 粒子。较高质量逐步提升至 100k；远期 50k–500k 不作为 MVP 门槛。性能预算和成长结构分别控制，避免降画质被误认为生命退化。
+首轮预算目标为 20k–100k 粒子。为适应性能与初生成长度，实际活跃粒子数可低于该区间；质量档位与数量补偿规则见 [ARCHITECTURE](ARCHITECTURE.md)。远期 50k–500k 不作为 MVP 门槛。性能预算和成长结构分别控制，避免降画质被误认为生命退化。
 
-## 后续能力
+## MVP 之后的能力边界
+
+以下能力不进入首轮 MVP，其中部分已在后续阶段实现；是否完成以 ROADMAP 对应任务及 CHANGELOG 验证记录为准，不将本节视为实现承诺或全体待办。
 
 - 行为扩展：Explore、Excited、Sleep、Playful、Lonely 等。
 - DNA：创建时生成并永久保存 movementStyle、symmetry、particleDensity、coreCount、tailProbability、noiseFrequency、noiseStrength、curiosityBase、fearBase、energyBase、growthBias、orbitBias、flowBias。

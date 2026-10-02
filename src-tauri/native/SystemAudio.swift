@@ -35,7 +35,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         if !ensureScreenCaptureAccess() {
             if cancelled { return }
             reportFailure(
-                "需要「屏幕与系统音频录制」权限。若系统已弹出授权窗口，请允许后完全退出并重启 Emerge。也可打开 系统设置 → 隐私与安全性 → 屏幕与系统音频录制，勾选 Emerge 后重启。开发构建每次重编译后可能需要重新授权。",
+                "error.audioPermission",
                 failure
             )
             callback(0, 0, 0, -1)
@@ -45,7 +45,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard !cancelled else { return }
             guard let display = content.displays.first else {
-                reportFailure("未找到可用显示器，无法监听系统声音。", failure)
+                reportFailure("error.audioNoDisplay", failure)
                 callback(0, 0, 0, -1)
                 return
             }
@@ -71,11 +71,11 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let denied = ns.domain == "com.apple.ScreenCaptureKit" || text.contains("TCC") || text.contains("拒绝") || text.contains("denied") || text.contains("Denied")
                 if denied {
                     reportFailure(
-                        "系统拒绝了屏幕/系统音频捕捉。请打开 系统设置 → 隐私与安全性 → 屏幕与系统音频录制，允许 Emerge。若开关已开启仍失败，请先关闭再打开，并重启应用；直接运行 target/debug/emerge 时请改用 Emerge.app 启动。",
+                        "error.audioDenied",
                         failure
                     )
                 } else {
-                    reportFailure("系统音频启动失败：\(text)", failure)
+                    reportFailure("error.audioStart\t\(text)", failure)
                 }
                 callback(0, 0, 0, -1)
             }
@@ -83,7 +83,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         if !cancelled {
-            reportFailure("系统音频捕获已停止：\((error as NSError).localizedDescription)", failure)
+            reportFailure("error.audioStopped\t\((error as NSError).localizedDescription)", failure)
             callback(0, 0, 0, -1)
         }
     }
@@ -119,7 +119,7 @@ func startAudio(_ callback: @escaping FeatureCallback, _ failure: @escaping Erro
         capture = next
         Task { await next.start() }
     } else {
-        reportFailure("系统声音需要 macOS 13 或更新版本。", failure)
+        reportFailure("error.audioVersion", failure)
         callback(0, 0, 0, -2)
     }
     }

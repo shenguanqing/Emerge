@@ -47,6 +47,12 @@ pub fn passthrough() -> bool {
     PASSTHROUGH.load(Ordering::SeqCst)
 }
 
+/// 每个窗口的物理几何必须使用它自己的缩放，不能借用主屏的 DPI。
+fn logical_bounds(x: i32, y: i32, width: u32, height: u32, scale: f64) -> (f64, f64, f64, f64) {
+    let scale = scale.max(1.0);
+    (x as f64 / scale, y as f64 / scale, width as f64 / scale, height as f64 / scale)
+}
+
 /// 启动指针跟踪线程（应用生命周期内单例）。
 pub fn spawn(app: tauri::AppHandle) {
     std::thread::spawn(move || {
@@ -71,15 +77,25 @@ pub fn spawn(app: tauri::AppHandle) {
                     let scale = win.scale_factor().unwrap_or(1.0).max(1.0);
                     let settings_open = app.get_webview_window("settings")
                         .map(|settings| settings.is_visible().unwrap_or(true)).unwrap_or(false);
+                    let welcome_bounds = app.get_webview_window("welcome")
+                        .filter(|welcome| welcome.is_visible().unwrap_or(false))
+                        .and_then(|welcome| {
+                            let p = welcome.outer_position().ok()?;
+                            let s = welcome.outer_size().ok()?;
+                            let scale = welcome.scale_factor().ok()?;
+                            Some(logical_bounds(p.x, p.y, s.width, s.height, scale))
+                        });
                     (f64::from(pos.x) / scale, f64::from(pos.y) / scale,
                      f64::from(size.width) / scale, f64::from(size.height) / scale,
-                     win.is_visible().unwrap_or(false) && !settings_open)
+                     win.is_visible().unwrap_or(false) && !settings_open, welcome_bounds)
                 });
             }
-            if let Some((origin_x, origin_y, w, h, enabled)) = bounds {
+            if let Some((origin_x, origin_y, w, h, enabled, welcome_bounds)) = bounds {
                 let x = mx - origin_x;
                 let y = my - origin_y;
-                let near = enabled
+                let in_welcome = welcome_bounds.map(|(x, y, w, h)|
+                    mx >= x && my >= y && mx < x + w && my < y + h).unwrap_or(false);
+                let near = enabled && !in_welcome
                     && x >= 0.0 && y >= 0.0 && x < w && y < h;
                 if near != last_near || (near && ((mx - last.0).abs() > 0.15 || (my - last.1).abs() > 0.15)) {
                     last_near = near;
@@ -108,4 +124,19 @@ pub fn spawn(app: tauri::AppHandle) {
             std::thread::sleep(Duration::from_millis(16));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::logical_bounds;
+
+    #[test]
+    fn welcome_bounds_use_their_own_monitor_scale() {
+        // 主屏为 2× Retina，欢迎窗所在屏为 1×；排除区域不能缩成一半。
+        assert_eq!(logical_bounds(1600, 100, 560, 640, 1.0), (1600., 100., 560., 640.));
+        // 同一逻辑大小移回 Retina 后，使用欢迎窗更新后的 2× 缩放。
+        assert_eq!(logical_bounds(200, 200, 1120, 1280, 2.0), (100., 100., 560., 640.));
+        // 带负原点的外接显示器保留正确方向与大小。
+        assert_eq!(logical_bounds(-560, 100, 560, 640, 1.0), (-560., 100., 560., 640.));
+    }
 }

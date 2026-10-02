@@ -15,7 +15,7 @@ export interface ColorTheme {
 export const COLOR_THEMES: ColorTheme[] = [
   {
     id: 'gold',
-    name: '贾维斯金橙',
+    name: '金橙',
     core: [1.0, 0.9, 0.58],
     body: [1.0, 0.48, 0.055],
     aura: [0.66, 0.22, 0.025],
@@ -73,15 +73,15 @@ export interface WindowSettings {
 export type AppSettings = VisualSettings & WindowSettings;
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  bodyScale: 0.2,
+  bodyScale: 0.4,
   theme: 'gold',
   hue: 42,
   brightness: 1,
   pointScale: 1,
   topmost: true,
   clickthrough: true,
-  positionX: 0.88,
-  positionY: 0.84,
+  positionX: 0.9,
+  positionY: 0.77,
 };
 
 /** 旧主题 id 迁移，避免用户存档丢配色。 */
@@ -106,11 +106,11 @@ const clampNum = (v: unknown, min: number, max: number, fallback: number): numbe
     ? Math.min(max, Math.max(min, v))
     : fallback;
 
-const KEY = 'emerge.settings';
+export const SETTINGS_STORAGE_KEY = 'emerge.settings';
 
 export function loadSettings(): AppSettings {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
@@ -131,10 +131,32 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(s: AppSettings): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(s));
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s));
   } catch {
     /* ignore quota */
   }
+}
+
+/** 只提取实际编辑的字段，避免独立窗口用旧快照覆盖其它窗口的修改。 */
+export function diffSettings(previous: AppSettings, current: AppSettings): Partial<AppSettings> {
+  const patch: Partial<AppSettings> = {};
+  for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof AppSettings>) {
+    if (previous[key] !== current[key]) Object.assign(patch, { [key]: current[key] });
+  }
+  return patch;
+}
+
+/** 基于最新持久化设置合并本次编辑，返回用于广播的完整视觉快照。 */
+export function patchSettings(patch: Partial<AppSettings>): AppSettings {
+  const next = { ...loadSettings(), ...patch };
+  saveSettings(next);
+  return next;
+}
+
+/** 接收远程变更时保留本地尚未提交的编辑，防止滑条当前帧被事件回放覆盖。 */
+export function mergeSettingsDraft(saved: AppSettings, editing: AppSettings, remote: Partial<AppSettings>) {
+  const nextSaved = { ...saved, ...remote };
+  return { saved: nextSaved, editing: { ...nextSaved, ...diffSettings(saved, editing) } };
 }
 
 function hueRotate(rgb: [number, number, number], deg: number): [number, number, number] {

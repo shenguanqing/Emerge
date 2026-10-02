@@ -340,6 +340,9 @@ void main() {
   sizeMul *= (1.0 + uPulseBoost * 0.15 + uEnergy * 0.12 * tw);
   sizeMul *= 1.0 + (layer < 0.5 ? coreGlow * 0.12 : 0.0);
   sizeMul *= 1.0 + isArc * streamArc * 0.25;
+  sizeMul *= 1.0 + isSpoke * spoke * along * 0.18;
+  // 逐粒子大小差异必须参与 gl_PointSize 输出，与 WebGPU 同式。
+  sizeMul *= 0.80 + 0.55 * hash1(seed * 57.3);
   // 一部分身体粒子沿真实 GPU 速度绘成细光丝，受惊后随运动自然松散。
   vFilament = (seed >= 0.16 && seed < 0.84 && hash1(seed * 151.7) > 0.55) ? 1.0 : 0.0;
   vec3 velocity = texture2D(uVelTex, uv).xyz;
@@ -364,7 +367,6 @@ void main() {
   vSpark *= attentionSignal(seed, uThoughtPhase, uFocusAngle, uAttention, uThoughtPulse);
   vSpark *= 1.0 + isNeural * neural * 0.55 + isSpoke * spoke * (0.30 + 0.50 * along)
           + isArc * streamArc * 0.4 + (layer < 0.5 ? coreGlow * 0.08 : 0.0);
-  sizeMul *= 1.0 + isSpoke * spoke * along * 0.18;
 }
 `;
 
@@ -516,7 +518,7 @@ export class WebGL2Backend {
 
     const error = this.gpu.init();
     if (error !== null) {
-      throw new Error(`GPGPU 初始化失败: ${error}`);
+      throw new Error(`GPGPU: ${error}`);
     }
 
     // 渲染点云：position 仅提供顶点数，真实位置在顶点着色器里从纹理读取。
@@ -572,9 +574,9 @@ export class WebGL2Backend {
     this.geometry.setDrawRange(0, this.particleCount);
   }
 
-  /** 质量档位：粒子基础尺寸。 */
+  /** 质量档位：粒子基础尺寸；低于可读下限的点会闪烁成灰尘，钳到 1.35 逻辑像素。 */
   setPointSize(size: number): void {
-    this.material.uniforms.uPointSize.value = size;
+    this.material.uniforms.uPointSize.value = Math.max(1.35, size);
   }
 
   /** 设置面板：团大小倍率 + 三层配色 + 亮度倍率。 */

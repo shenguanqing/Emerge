@@ -4,152 +4,107 @@
 
 > 粒子本身就是生命体。
 
-它通过呼吸、流动、迟疑、躲避和重新凝聚，让用户感受到一个未知生命正在回应自己。视觉追求极简、神秘、有机与克制的科幻感。
+通过呼吸、流动、迟疑、躲避和重新凝聚，呈现未知生命的回应。优先面向 macOS、Windows 和 Web；具体实现进度与平台验证范围见 [开发路线](docs/ROADMAP.md)，按日期的变更和实际验收结果见 [变更记录](CHANGELOG.md)。
 
-## 当前状态
+## 安装与运行
 
-2026-10-01 检查点：观察空间、四形态光丝与注意节律、中英文设置及音乐互斥已实现。类型检查、核心/输入/原生窗口回归通过，macOS debug 应用可构建；两小时记录只覆盖主进程与可归属子进程。Windows、全应用功耗/内存、真实休眠、多日连续性及真人生命感仍有未验收项，详见 [本日验收记录](docs/reports/acceptance-2026-10-01.md)。首次启动用户引导目前仅讨论，尚未实现。
-
-**MVP（Phase 1–9）与生命闭环（Phase 10a）已交付**：GPU 粒子模拟（WebGPU Compute + WebGL2 GPGPU 双后端）、三层有机形态、Curl Noise 流场、指针力场与感知延迟、驱散-重组、情绪与行为系统、Tauri 2 桌面窗口、自适应质量与低功耗调度；**永久 DNA（Life ID）、成长（Origin / Awaken / Conscious / Emerge 四形态）、记忆性格、现实昼夜、离线回归问候与持久化存档**。分阶段验证记录见 [docs/reports/](docs/reports/)。
-
-你的生命体首次运行时诞生（Life ID 永久保存），可见陪伴、附近温和互动与有效音乐共同推动成长——形态会从流带逐步组织成脉络与断续轨道；凌晨它会困、变暗；几天不开、回来时它会从松散中重新凝聚向你打招呼。存档在浏览器 localStorage（30 秒自动保存）。
+Web 开发需要 Node.js 20.19+（20.x）或 22.12+ 与 npm；桌面开发还需要 Rust 和目标平台的 Tauri 2 构建环境。macOS 的 Swift 系统音频模块使用 Xcode Command Line Tools 编译。
 
 ```bash
 npm install
-npm run dev        # Web 开发服务器（http://localhost:5173）
+npm run dev        # Web 开发服务器：http://localhost:5173
 npm run build      # 类型检查 + 生产构建
-npm run test:core  # 核心行为、存档与成长回归
-npm run test:audio # 播放、暂停与自动补播回归
-npm run test:input # 音频与双击模式切换回归
 npm run preview    # 预览构建产物
-npm run app:dev    # 实时调试桌面端（推荐日常使用）
-npm run app:build  # 编译 debug 可执行文件（不打包）
-npm exec tauri build -- --debug --bundles app # 打出可双击的 Emerge.app
+npm run app:dev    # 桌面实时调试
+npm run app:build  # 编译 debug 可执行文件，不打包
 ```
 
-## 实时调试（不必每次重新打包）
-
-日常改代码用 **`npm run app:dev`**：
-
-1. 自动起 Vite（`localhost:5173`），窗口加载的是开发服务器
-2. 改 `src/**` 的 Vue / TS → **HMR 热更新**，窗口秒级刷新，不用重启
-3. 改 `src-tauri/**` 的 Rust / Swift → Tauri **自动重编译并重启**窗口（比 `tauri build` 快很多）
-4. Ctrl+C 停止
-
-| 你改了什么 | 要不要 `app:dev` 重启 | 要不要打 `.app` |
-| --- | --- | --- |
-| Vue / TS / 样式 / shader 字符串 | 否，HMR 即可 | 否 |
-| 仅看形态、情绪、成长 | 可只开 `npm run dev` 在浏览器测 | 否 |
-| Rust / Swift / 依赖 / `Info.plist` | 自动重编，无需手动打包 | 否 |
-| 托盘 | `app:dev` 可测试 | 否 |
-| 系统音频、TCC 权限 | 裸开发程序可能不弹授权提示 | 使用 debug `.app` 验证 |
-| 双击分发、给别人用 | — | `npm exec tauri build -- --debug --bundles app` |
-
-注意：
-
-- `app:dev` 跑的是裸程序 `src-tauri/target/debug/emerge`。本机观察到点击监听后无授权弹窗、权限列表无 Emerge；不能保证重启或重新开关权限即可解决。嵌入 Info.plist 不等于签名已绑定应用身份。
-- 浏览器 `npm run dev` **没有**托盘 / 系统音频 / 穿透，只适合验视觉与 core 逻辑。
-- 系统音频验证：先 Ctrl+C 停止开发实例，执行 `npm exec tauri build -- --debug --bundles app`，再 `open src-tauri/target/debug/bundle/macos/Emerge.app`。点击「监听系统声音」后按系统提示授权；若没有登记，可在系统设置的「屏幕与系统音频录制」列表用 `+` 手动添加此 `.app`，开启后退出并重新打开。授权须用户自行完成。
-- debug `.app` 使用构建后的前端，不提供 Vite 热更新。它仍是 ad-hoc 签名，不能承诺重编译后权限永久有效。
-
-Web 端可用 `?backend=webgpu|webgl2` 强制指定模拟后端；左下诊断条显示后端、状态（平静/好奇/警觉/受惊）、FPS、粒子数、质量档位与目标帧率。
-
-## 体验要点
-
-- 启动：黑暗中粒子逐个显现 → 旋涡收拢 → 约 7.5 秒凝聚成呼吸的生命体。
-- 缓慢靠近：它感知你、试探、好奇时核心会主动靠近。
-- 高速划过：身体被冲散、核心暴露，约 3 秒旋涡式重组，之后与你保持更远距离。
-- 长时间不互动：它进入低功耗（60→30→15 FPS），动作放缓。
-- 质量档位自动升降（Low 8k → Ultra 100k 粒子）。
-
-## 测试时间加速（不用一天天等）
-
-成长与昼夜走的是虚拟生命时钟，可用 URL 参数加速：
+macOS 可双击的 debug 应用包：
 
 ```bash
-npm run dev
-# 打开 http://localhost:5173/?timelapse=500&debug=1
+npm exec tauri build -- --debug --bundles app
+open src-tauri/target/debug/bundle/macos/Emerge.app
 ```
 
-- `?timelapse=N`：时间倍率——500 表示真实 1 秒 = 生命体 500 秒（一天约 3 分钟），陪伴天数、互动累计、昼夜循环全部加速。
-- `?debug=1`：右下角调试面板——「+1 天」「+60 分钟互动」「模拟离开 3 天」（触发离线回归问候）「重置生命」。
-- `?age=N`：新生生命直接带到 N 天里程碑（看环/双核形态）。
-- `?offline=N`：启动即模拟离开 N 分钟的回归问候。
+## 使用
 
-组合示例：`?timelapse=500&debug=1&age=12` —— 直接观察接近完全体的形态。
+缓慢靠近可观察注意方向与局部粒子的回应；轻点产生涟漪，长按产生吸引场，高速划过会驱散身体，再通过力场逐渐重新聚合。质量与目标帧率随负载和活动调整。
 
-## 桌面端使用
+桌面通过托盘菜单显示/隐藏生命体、打开设置、控制声音或退出；默认鼠标穿透。位置由设置或首次引导的桌面摆放图调整，支持拖动、点按和方向键微调，摆放后固定停留。
 
-macOS **托盘图标左键**弹出菜单：
+macOS 粒子主窗采用跨桌面显示策略，切换普通虚拟桌面时沿用同一个生命体与摆放位置；主动隐藏后在其它桌面也保持隐藏。修改桌面窗口配置后需重启桌面应用。各平台及特殊空间的验证范围见 ROADMAP「已知坑」。
 
-- 生命信息 / 系统声音状态
-- **显示 / 隐藏**
-- **监听系统声音** / **选择音乐文件…** / **停止音乐** / 打开系统声音权限设置…
-- **设置**：外观（团大小、亮度、点大小、配色）、行为（置顶、鼠标穿透）、桌面位置、成长与积累说明
-- **退出**
+设置提供大小、亮度、点大小、配色、置顶、穿透、位置和成长信息。「通用」可切换中文 / English / 日本語 / 한국어、浅深色主题，并重新查看欢迎引导。
 
-窗口铺满主屏、无边框透明。**按住并拖动**可把生命体放到任意位置。默认鼠标穿透，避免挡住桌面。
+双击粒子团进入观察空间，拖动旋转、滚轮缩放，按 Esc、双击或关闭按钮返回桌面；关闭观察空间不停止当前音乐。macOS 应用菜单还提供设置（Cmd+,）与观察空间（Cmd+O）入口。
 
-## 音乐响应
+## 首次启动与存档
 
-托盘「选择音乐文件…」或「监听系统声音」——生命体会"听"：
+没有生命存档的新用户在桌面启动时进入欢迎引导：认识 → 大小、配色与摆放 → 可跳过的音乐入口。完成或跳过后打开设置；未完成关闭，下次启动再次显示。已有生命存档的升级用户可从设置手动打开引导。
 
-- **Bass** → 身体随低音脉冲
-- **Beat** → 核心打出能量波（旋涡骤然活跃）
-- **Treble** → 外围粒子变得活跃
-- 高能音乐 → 兴奋；安静 → 平静
+生命身份、DNA 与聚合成长记录保存在该运行环境的 localStorage，每 30 秒自动保存，并在隐藏/退出时保存。外观设置与生命存档分别存储；引导完成标记位于桌面应用配置目录的 `onboarding.json`。重新查看引导不重置生命。
 
-音频只影响行为参数。macOS 13+ 通过 ScreenCaptureKit 获取系统音频频段能量；需在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」允许 Emerge。无屏幕帧、无录音文件、无上传。
+Web 与桌面的存档相互独立，不共享 Life ID 或成长记录；存储不可用时回退内存，关闭后无法保留本次记录。迁移与计分规则见 [技术架构](docs/ARCHITECTURE.md#数据与持久化)。
 
-Windows 系统音频尚未实现，Web 和 Windows 可继续使用音乐文件。
+可见陪伴、附近温和互动与持续有效声音推动成长。形态从 Origin / Awaken 逐步组织成 Conscious / Emerge 的脉络与断续轨道；设置中的成长区可查看统计。产品边界见 [产品定义](docs/PRODUCT.md)。
 
-Web 与桌面 localStorage 相互独立，可能有不同 Life ID、年龄和成长阶段；修复统一了渲染参数，但不会覆盖已有生命存档，因此两端不保证外观逐帧相同。
+## 音乐与权限
 
-## 平台
+托盘与观察空间可选择音乐文件；macOS 13+ 可通过 ScreenCaptureKit 监听系统声音。低音影响身体脉冲，节拍影响核心能量波，高频影响外围活动，音频只驱动行为参数。只分析频段能量，不接收屏幕帧、不保存录音、不上传。
 
-- **Web**：完整体验（Chrome/Edge 推荐，WebGPU 优先，WebGL2 后备）。
-- **macOS / Windows**：Tauri 2 桌面窗口。macOS 已修复页面黑底、画布输入遮挡与拖动权限，最新验证边界见 [桌面修复记录](docs/reports/desktop-fixes.md)；Windows 待验证。
+系统监听连接中或监听时，文件选择、文件播放/暂停与停止操作受互斥限制；先停止系统监听再切换音乐文件。Windows 系统音频捕获尚未实现；Web 可使用音乐文件，Windows 文件播放仍须目标系统验证。
 
-## MVP 验收
+系统声音只在用户选择监听时请求权限。macOS 按系统提示在「隐私与安全性 → 屏幕与系统音频录制」允许 Emerge；如提示重启，完全退出再打开。权限须用户自行授予。
 
-自动化 soak（5 分钟混合场景）通过：0 错误、情绪自主转换、冲击-重组循环稳定、低功耗调度生效。记录见 [docs/reports/mvp-acceptance.md](docs/reports/mvp-acceptance.md)；「五分钟真人体验」验收待用户实际运行补充。
+裸开发程序可能不弹权限提示或无法登记，嵌入 Info.plist 不等于签名已绑定应用身份。验证系统音频时先停止开发实例，再使用上述 debug `.app`；如未登记，可在系统权限列表用 `+` 手动添加。debug 包采用 ad-hoc 签名，重编译后可能需要重新授权。
 
-## 文档导航
+## 开发与预览
 
-- [文档索引](docs/README.md)
-- [产品定义与 MVP 边界](docs/PRODUCT.md)
-- [技术架构与平台策略](docs/ARCHITECTURE.md)
-- [视觉与交互规格](docs/VISUAL_INTERACTION.md)
-- [分阶段开发路线](docs/ROADMAP.md)
-- [验收与性能验证](docs/VALIDATION.md)
-- [初始技术决策](docs/decisions/0001-technical-direction.md)
-- [原始需求](docs/ORIGINAL_BRIEF.md)
-- [协作约定](AGENTS.md) · [变更记录](CHANGELOG.md)
+`npm run app:dev` 自动启动 Vite；Vue / TypeScript / 样式修改通过 HMR 更新，Rust / Swift 修改会触发桌面重编译和重启，Ctrl+C 停止。debug `.app` 加载构建产物，不提供 Vite 热更新。浏览器不具备托盘、桌面穿透或系统音频入口。
 
+| 预览参数 | 用途 |
+| --- | --- |
+| `?backend=webgpu` / `?backend=webgl2` | 强制后端，检查双后端表现 |
+| `?debug=1` | 诊断条与时间调试面板 |
+| `?growth=0.6` | 直接观察指定成长度的形态 |
+| `?age=12` | 注入使用日与互动记录，检查成长路径 |
+| `?timelapse=500` | 虚拟生命时钟加速 |
+| `?offline=4320` | 模拟离开 4320 分钟后的回归 |
+| `?window=settings` | 设置页预览 |
+| `?window=welcome&preview=1` | 引导预览；配色/位置不落盘、不调用桌面音乐 |
 
-## 三条成长路径
+含 `growth`、`age`、`offline` 或 `timelapse` 的主窗预览使用存档副本，不写回真实成长记录。`age` 是测试注入，不保证指定日期必然对应某个形态。Web 主入口不自动显示桌面引导。
 
-- 可见陪伴：显示时累计，隐藏、关闭与休眠不补发积分；仅靠陪伴也能成熟。
-- 温和互动：只统计粒子附近的真实低速动作和轻点后的短暂回应。鼠标静止或远处移动不算互动；每日前 20 分钟贡献较高。
-- 音乐陪伴：连续有声两秒后开始按时长计分，静音不算；每日前 30 分钟贡献较高，之后递减。系统声音和文件音乐都适用，持续语音等声音也会计入，音量大小不增加积分倍率。
+## 检查与验证
 
-设置中的「成长」可查看成长度、陪伴、互动和有效音乐时长。DNA 影响速度但不限制最终上限。旧存档自动迁移并保留生命身份和旧成长下限。详细规则与验证边界见 [三路径成长决策](docs/decisions/0003-growth-paths.md)。
+```bash
+npm run build      # 类型检查与构建
+npm run test:core  # 核心行为、随机、存档与成长
+npm run test:input # 音频与双击模式切换
+npm run test:i18n  # 四语词条、插值与代码引用
+cargo test --offline --manifest-path src-tauri/Cargo.toml # 原生回归（须已缓存依赖）
+```
 
-## 观察空间与本地验收
+视觉、真实性能与桌面能力按 [验收标准](docs/VALIDATION.md) 实测；构建与测试通过不代表生命感或全部平台验收通过。
 
-双击粒子团打开观察空间；macOS 应用菜单「观察空间…」（Cmd+O）提供另一个入口。空间内可选择音乐文件、播放/暂停和停止；macOS 还可监听系统声音，与托盘状态一致。关闭观察空间会恢复鼠标穿透偏好，音乐保持当前播放状态。设置入口为应用菜单「设置…」（Cmd+,）或托盘。
-
-带 `growth`、`age`、`offline` 或 `timelapse` 参数的 Web 预览使用存档副本，不会写回真实成长记录。
-
-长时采样脚本仅读取指定 Emerge 进程及可归属的子进程，每分钟记录 RSS 和 CPU：
+本地资源采样仅读取指定进程及可归属子进程：
 
 ```bash
 python3 scripts/macos-soak.py --pid <Emerge进程编号> --hours 2 --interval 60 --output output/macos-soak.jsonl
 ```
 
-`output` 仅在本地保存，不提交。独立 WebKit/GPU 进程未计入；CPU 数字不能代表功耗，真实休眠及多日成长仍须单独验收。当前结果见 [2026-10-01 验收记录](docs/reports/acceptance-2026-10-01.md)。
+添加 `--follow-restarts --executable <可执行文件绝对路径>` 可在采样窗口内跟随同一应用重启。`output/` 保留在本地；独立 WebKit/GPU 进程未计入，CPU 不能代表功耗，多个短会话不能作为连续运行通过。采样结果记入 CHANGELOG，待验收项维护在 ROADMAP。
 
+## 文档导航
 
-系统监听连接中或监听时，观察空间会禁用文件选择并隐藏文件播放/暂停，与托盘一致。新注意节律让局部节点依次传播、结构停顿后继续组织，并在附近输入时渐进调整方向；此版仍需真人生命感反馈。
-
-资源观察可在指定窗口内跟随应用重启：在上述采样命令中添加 `--follow-restarts --executable <Emerge可执行文件绝对路径>`。摘要会区分连续运行、重启次数与未运行样本，不把多个短会话视为连续运行通过。
+| 文档 | 职责 |
+| --- | --- |
+| [ROADMAP](docs/ROADMAP.md) | 当前阶段、任务、待验收项与已知坑 |
+| [CHANGELOG](CHANGELOG.md) | 按日期的变更、重要决策与实际验证结果 |
+| [PRODUCT](docs/PRODUCT.md) | 产品目标与范围边界 |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | 技术契约、模块与数据流 |
+| [VISUAL_INTERACTION](docs/VISUAL_INTERACTION.md) | 粒子视觉、行为交互与创意基线 |
+| [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md) | 设置、引导与观察空间的界面规范 |
+| [VALIDATION](docs/VALIDATION.md) | 验收方法、标准与记录格式 |
+| [ORIGINAL_BRIEF](docs/ORIGINAL_BRIEF.md) | 原始需求只读存档 |
+| [AGENTS](AGENTS.md) | 项目协作与文档维护约定 |
