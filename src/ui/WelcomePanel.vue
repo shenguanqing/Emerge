@@ -15,19 +15,29 @@ import {
   patchSettings,
   type ColorTheme,
 } from '../core/settings';
+import { defaultStorage } from '../core/LifeStorage';
+import { saveOnboardingState } from '../core/onboarding';
 import { setLocaleMode, t, type LocaleMode } from '../i18n';
-import { emitNative, invoke, isDesktop, listenNative } from '../platform/desktop';
+import { emitLocal, emitNative, invoke, isDesktop, listenLocal, listenNative } from '../platform/desktop';
+
+/**
+ * embedded：主应用内嵌覆盖层（Web 端首次引导），完成动作交给宿主切换界面。
+ * 独立窗口/直链模式行为不变：桌面走 complete_onboarding，Web 直链跳设置页。
+ */
+const props = defineProps<{ embedded?: boolean }>();
+const emit = defineEmits<{ finish: [] }>();
 
 const step = ref(0);
 const title = ref<HTMLElement | null>(null);
 const contentEl = ref<HTMLElement | null>(null);
-/** 界面主题：auto 跟随系统；读取时校验，非法值按 auto（与设置页同一模式）。 */
+/** 界面主题：auto 跟随系统；Web 端无存储时默认深色（与主画面一致），桌面保持 auto。 */
 type ThemeMode = 'auto' | 'light' | 'dark';
 function readStoredTheme(): ThemeMode {
   try {
     const v = localStorage.getItem('emerge.ui.theme');
-    return v === 'light' || v === 'dark' ? v : 'auto';
-  } catch { return 'auto'; }
+    if (v === 'light' || v === 'dark') return v;
+  } catch { /* ignore */ }
+  return isDesktop ? 'auto' : 'dark';
 }
 const themeMode: ThemeMode = readStoredTheme();
 const settings = reactive(loadSettings());
@@ -44,25 +54,33 @@ let disposed = false;
 let systemRevision = 0;
 const headings = computed(() => [t('welcome.meet'), t('welcome.place'), t('welcome.listen')]);
 
+/** 外观改动即时落盘并通知主窗：跨窗走原生事件，同页覆盖层走本地事件桥。 */
 async function applyAppearance(key: 'bodyScale' | 'theme' | 'hue'): Promise<void> {
   if (preview) return;
   try {
     const patch = { [key]: settings[key] };
     Object.assign(settings, patchSettings(patch));
+    emitLocal('app-settings-changed', patch);
+    emitLocal('visual-settings', { ...settings, colors: resolveColors(settings) });
+    if (!isDesktop) return;
     await emitNative('app-settings-changed', patch);
     await emitNative('visual-settings', { ...settings, colors: resolveColors(settings) });
   } catch (e) { error.value = t('welcome.errorSave', { e: String(e) }); }
 }
 
 /** 摆放图与设置页同一套交互：拖动 / 点按 / 方向键微调，改动即保存并通知主窗。 */
-const screenWidth = window.screen?.width ?? 16;
-const screenHeight = window.screen?.height ?? 10;
+/** 摆放预览按宿主显示区域比例：桌面为整块屏幕，Web 为浏览器视口。 */
+const screenWidth = isDesktop ? (window.screen?.width ?? 16) : (window.innerWidth || 16);
+const screenHeight = isDesktop ? (window.screen?.height ?? 10) : (window.innerHeight || 10);
 const placing = ref(false);
 async function applyPosition(): Promise<void> {
   if (preview) return;
   try {
     const patch = { positionX: settings.positionX, positionY: settings.positionY };
     Object.assign(settings, patchSettings(patch));
+    emitLocal('app-settings-changed', patch);
+    emitLocal('desktop-position', { x: settings.positionX, y: settings.positionY });
+    if (!isDesktop) return;
     await emitNative('app-settings-changed', patch);
     await emitNative('desktop-position', { x: settings.positionX, y: settings.positionY });
   } catch (e) { error.value = t('welcome.errorSave', { e: String(e) }); }
@@ -274,9 +292,8 @@ watch(step, async () => {
   error.value = '';
   schedulePoll();
   await nextTick();
-  // 切步后从新内容顶部开始，不沿用上一步的滚动位置。
-  if (contentEl.value) contentEl.value.scrollTop = 0;
-  title.value?.focus();
+  // 过渡期间滚动位置随节点重建自动回顶；结束后聚焦新标题（读屏跟随）。
+  window.setTimeout(() => { title.value?.focus(); }, 220);
 });
 
 async function toggleSystem(): Promise<void> {
@@ -302,12 +319,73 @@ async function pickMusic(): Promise<void> {
   finally { busy.value = false; }
 }
 
+/** 主应用内嵌时复用 MusicControl 的共享音频实例：引导页选中的文件音乐直接驱动生命体。 */
+interface SharedAudio {
+  attachFile(file: File): Promise<void>;
+  detach(): void;
+}
+function sharedAudio(): SharedAudio | null {
+  return (window as typeof window & { __emergeAudio?: SharedAudio }).__emergeAudio ?? null;
+}
+/** Web 内嵌引导：本地文件音乐入口可用（独立直链页没有共享音频实例，保持禁用）。 */
+const webMusicEnabled = !isDesktop && props.embedded && sharedAudio() !== null;
+const webFileInput = ref<HTMLInputElement | null>(null);
+/** 「正在听」行：桌面选曲经 music-state 事件回流，网页选择后由共享实例同步。 */
+const webMusicName = ref('');
+const webMusicBusy = ref(false);
+
+function onPickMusic(): void {
+  if (isDesktop) void pickMusic();
+  else webFileInput.value?.click();
+}
+
+async function onWebMusicFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  const audio = sharedAudio();
+  if (!file || !audio) return;
+  webMusicBusy.value = true;
+  error.value = '';
+  try {
+    await audio.attachFile(file);
+  } catch (e) { error.value = t('welcome.errorMusic', { e: String(e) }); }
+  finally { webMusicBusy.value = false; }
+}
+
+function stopGuideMusic(): void {
+  if (isDesktop) { void invoke('stop_music').catch((e) => { error.value = String(e); }); return; }
+  sharedAudio()?.detach();
+}
+
+const unlistensMusic: Array<() => void> = [];
+let disposedMusic = false;
+onMounted(() => {
+  const receiveMusic = (p: { name: string; playing: boolean }): void => {
+    if (!disposedMusic) webMusicName.value = p.name;
+  };
+  void listenNative<{ name: string; playing: boolean }>('music-state', receiveMusic).then((un) => {
+    if (disposedMusic) un(); else unlistensMusic.push(un);
+  });
+  unlistensMusic.push(listenLocal<{ name: string; playing: boolean }>('music-state', receiveMusic));
+});
+
 async function finish(): Promise<void> {
   busy.value = true;
   error.value = '';
+  if (props.embedded) {
+    // 标记逻辑与桌面 complete_onboarding 同位：完成动作本身负责落盘，宿主只关覆盖层。
+    if (!preview) saveOnboardingState(defaultStorage(), true);
+    emit('finish');
+    return;
+  }
   try {
     if (isDesktop) await invoke('complete_onboarding');
-    else location.href = '?window=settings';
+    else {
+      // Web 直链模式没有 Rust 命令，完成标记与桌面 onboarding.json 同语义落盘；完成后回主页面。
+      if (!preview) saveOnboardingState(defaultStorage(), true);
+      location.href = location.origin + location.pathname;
+    }
   } catch (e) { error.value = t('welcome.errorFinish', { e: String(e) }); busy.value = false; }
 }
 
@@ -320,6 +398,8 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   disposed = true;
+  disposedMusic = true;
+  for (const un of unlistensMusic) un();
   unlistenLocale?.();
   clearTimeout(pollTimer);
   cancelAnimationFrame(orbRaf);
@@ -341,20 +421,21 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
           :aria-current="step === i ? 'step' : undefined"
         ><span class="sr-only">{{ heading }}</span></li>
       </ol>
-      <button v-if="step === 0" type="button" class="peek-hint" aria-live="polite" @click="peekObservatory">{{ peeked ? t('welcome.peekDone') : t('welcome.peekTry') }}</button>
+      <button v-if="step === 0" type="button" class="peek-hint" aria-live="polite" @click="peekObservatory">{{ peeked ? t(isDesktop ? 'welcome.peekDone' : 'welcome.peekDoneWeb') : t('welcome.peekTry') }}</button>
     </header>
 
-    <section ref="contentEl" class="content" :key="step">
+    <Transition name="step-fade" mode="out-in">
+      <section ref="contentEl" class="content" :key="step">
       <div class="column">
         <template v-if="step === 0">
           <h1 ref="title" tabindex="-1">{{ t('welcome.meetTitle') }}</h1>
-          <p class="intro">{{ t('welcome.meetIntro') }}</p>
+          <p class="intro">{{ t(isDesktop ? 'welcome.meetIntro' : 'welcome.meetIntroWeb') }}</p>
           <ul class="lessons card">
             <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.slow') }}</strong><p>{{ t('welcome.slowDesc') }}</p></div></li>
             <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.tap') }}</strong><p>{{ t('welcome.tapDesc') }}</p></div></li>
             <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.observe') }}</strong><p>{{ t('welcome.observeDesc') }}</p></div></li>
           </ul>
-          <p class="note">{{ t('welcome.trayHint') }}</p>
+          <p class="note">{{ t(isDesktop ? 'welcome.trayHint' : 'welcome.webHint') }}</p>
         </template>
 
         <template v-else-if="step === 1">
@@ -425,7 +506,7 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
               <p class="note plain">{{ t('position.hint') }}</p>
               <p class="coord" aria-live="polite">{{ Math.round(settings.positionX * 100) }}% · {{ Math.round(settings.positionY * 100) }}%</p>
             </div>
-            <p class="note card-note">{{ t('welcome.passthrough') }}</p>
+            <p v-if="isDesktop" class="note card-note">{{ t('welcome.passthrough') }}</p>
           </div>
         </template>
 
@@ -433,26 +514,38 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
           <h1 ref="title" tabindex="-1">{{ t('welcome.listenTitle') }}</h1>
           <p class="intro">{{ t('welcome.listenIntro') }}</p>
           <div class="options">
-            <button type="button" class="option" :disabled="busy || !isDesktop || preview || systemStatus !== 'off'" @click="pickMusic">
+            <button
+              type="button"
+              class="option"
+              :class="{ solo: !isDesktop }"
+              :disabled="busy || webMusicBusy || preview || (isDesktop && systemStatus !== 'off') || (!isDesktop && !webMusicEnabled)"
+              @click="onPickMusic"
+            >
               <svg class="option-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></svg>
               <span>{{ t('music.select') }}</span>
             </button>
-            <button type="button" class="option" :class="{ on: systemStatus !== 'off' }" :disabled="busy || !isDesktop || preview" :aria-pressed="systemStatus !== 'off'" @click="toggleSystem">
+            <button v-if="isDesktop" type="button" class="option" :class="{ on: systemStatus !== 'off' }" :disabled="busy || preview" :aria-pressed="systemStatus !== 'off'" @click="toggleSystem">
               <svg class="option-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4" /></svg>
               <span>{{ t(systemStatus === 'off' ? 'music.listen' : 'music.stopSystem') }}</span>
             </button>
+          </div>
+          <input v-if="!isDesktop" ref="webFileInput" class="web-music-file" type="file" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.flac,.aiff,.aif" :aria-label="t('music.select')" @change="onWebMusicFile" />
+          <div v-if="webMusicName" class="music-now-row">
+            <p role="status" class="note now-playing">{{ t('music.nowPlaying', { song: webMusicName }) }}</p>
+            <button type="button" class="btn-text" :disabled="webMusicBusy" @click="stopGuideMusic">{{ t('music.stop') }}</button>
           </div>
           <p v-if="systemStatus !== 'off'" role="status" class="note" :class="{ 'now-playing': !!nowPlaying }">
             {{ nowPlaying ? t('music.nowPlaying', { song: nowPlaying }) : t(systemStatus === 'starting' ? 'music.starting' : 'music.system') }}
           </p>
           <details class="permission card"><summary>{{ t('welcome.permissionTitle') }}</summary><p class="note plain">{{ t('welcome.permission') }}</p></details>
           <p class="note">{{ t('welcome.skipMusic') }}</p>
-          <p v-if="!isDesktop || preview" class="note">{{ t('welcome.desktopOnly') }}</p>
+          <p v-if="!isDesktop || preview" class="note">{{ t(isDesktop ? 'welcome.desktopOnly' : 'welcome.musicWeb') }}</p>
         </template>
 
         <p v-if="error" role="alert" class="error">{{ error }}</p>
       </div>
     </section>
+    </Transition>
 
     <footer>
       <div class="footer-inner">
@@ -616,10 +709,11 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
 }
 .column {
   box-sizing: border-box;
+  /* 与设置页同一几何：外列 480（面板宽）、侧边距 20，卡片实宽 440 对齐设置卡片 */
   width: 100%;
-  max-width: 440px;
+  max-width: 480px;
   margin: 0 auto;
-  padding: 22px 24px 16px;
+  padding: 22px 20px 16px;
 }
 h1 {
   font-family: Georgia, 'Songti SC', 'Noto Serif SC', serif;
@@ -875,11 +969,36 @@ h1:focus {
   flex: 0 0 auto;
 }
 
-/* ===== 音乐：两个并排的大选项 ===== */
+/* ===== 音乐：桌面两个并排大选项；Web 单选项通栏 + 隐藏文件输入 ===== */
 .options {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+.options .option.solo {
+  grid-column: 1 / -1;
+}
+.web-music-file {
+  display: none;
+}
+.music-now-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--bg-sunken);
+}
+.music-now-row .note {
+  margin: 0;
+  text-align: left;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.music-now-row .btn-text {
+  flex: 0 0 auto;
 }
 .option {
   display: flex;
@@ -955,7 +1074,7 @@ footer {
   align-items: center;
   gap: 8px;
   width: 100%;
-  max-width: 392px;
+  max-width: 440px;
   margin: 0 auto;
 }
 .btn-text {
@@ -1063,6 +1182,19 @@ footer {
   h1 {
     font-size: 23px;
   }
+}
+/* 步骤切换：轻微升降渐隐，避免内容硬切 */
+.step-fade-enter-active,
+.step-fade-leave-active {
+  transition: opacity 0.16s ease, transform 0.18s var(--ease);
+}
+.step-fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.step-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 @media (prefers-reduced-motion: reduce) {
   .welcome *,

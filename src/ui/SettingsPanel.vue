@@ -21,8 +21,16 @@ import {
   type ColorTheme,
 } from '../core/settings';
 import type { LifeEngine } from '../core/LifeEngine';
-import { emitNative, invoke, isDesktop, listenNative } from '../platform/desktop';
+import { emitLocal, emitNative, invoke, isDesktop, listenLocal, listenNative } from '../platform/desktop';
 import { locale, localeMode, setLocaleMode, stageDisplayName, t, type LocaleMode } from '../i18n';
+import { CLOCK_STATE_STORAGE_KEY } from '../core/settings';
+
+/**
+ * embedded：主应用内嵌覆盖层（Web 端），无原生窗口标题栏，
+ * 自带关闭按钮与 Esc 关闭，动作通过事件交给宿主处理。
+ */
+const props = defineProps<{ embedded?: boolean }>();
+const emit = defineEmits<{ close: []; 'replay-welcome': [] }>();
 
 const s = reactive<AppSettings>(loadSettings());
 let lastSaved = { ...s };
@@ -34,13 +42,14 @@ useSettingsSync((patch) => {
 });
 const windowError = ref('');
 
-/** 界面主题：auto 跟随系统，可手动切 light / dark。 */
+/** 界面主题：auto 跟随系统，可手动切 light / dark；Web 端无存储时默认深色（与主画面一致），桌面保持 auto。 */
 type ThemeMode = 'auto' | 'light' | 'dark';
 function readStoredTheme(): ThemeMode {
   try {
     const v = localStorage.getItem('emerge.ui.theme');
-    return v === 'light' || v === 'dark' ? v : 'auto';
-  } catch { return 'auto'; }
+    if (v === 'light' || v === 'dark') return v;
+  } catch { /* ignore */ }
+  return isDesktop ? 'auto' : 'dark';
 }
 const themeMode = ref<ThemeMode>(readStoredTheme());
 const themeOptions = computed(() => [
@@ -108,8 +117,9 @@ const brightnessPct = computed(() => Math.round(s.brightness * 100));
 const pointScalePct = computed(() => Math.round(s.pointScale * 100));
 const hueDeg = computed(() => Math.round(s.hue));
 
-/** 向其它窗口发原生事件；非桌面环境或发送失败时静默忽略。 */
+/** 向其它窗口发原生事件；同页覆盖层（Web）走 DOM 事件直达宿主。 */
 function send(event: string, payload: unknown): void {
+  emitLocal(event, payload);
   if (!isDesktop) return;
   try { void Promise.resolve(emitNative(event, payload)).catch(() => {}); } catch { /* 忽略 */ }
 }
@@ -208,8 +218,9 @@ watch(() => [s.topmost, s.clickthrough], () => {
   });
 }, { immediate: true });
 
-const screenWidth = window.screen?.width ?? 16;
-const screenHeight = window.screen?.height ?? 10;
+/** 摆放预览按宿主显示区域比例：桌面为整块屏幕，Web 为浏览器视口。 */
+const screenWidth = isDesktop ? (window.screen?.width ?? 16) : (window.innerWidth || 16);
+const screenHeight = isDesktop ? (window.screen?.height ?? 10) : (window.innerHeight || 10);
 const placing = ref(false);
 function movePlacement(event: PointerEvent): void {
   if (!placing.value) return;
@@ -233,9 +244,15 @@ function keyPlacement(event: KeyboardEvent): void {
 }
 
 async function replayWelcome(): Promise<void> {
+  if (props.embedded) { emit('replay-welcome'); return; }
   if (!isDesktop) { location.href = '?window=welcome'; return; }
   try { await invoke('open_onboarding'); }
   catch (error) { windowError.value = String(error); }
+}
+
+/** Web 直链模式（?window=settings）没有原生窗口按钮，提供返回主应用入口。 */
+function backToApp(): void {
+  location.href = location.origin + location.pathname;
 }
 
 /** 「恢复默认」同样两段确认：第一次点亮确认态，4 秒内再点才执行。 */
@@ -279,15 +296,29 @@ function sliderFill(value: number, min: number, max: number): Record<string, str
   return { '--fill': `${pct}%` };
 }
 
+type ClockStatePayload = { vnow: string; scale: number; growth: ReturnType<LifeEngine['getGrowthSummary']> };
+function receiveClock(c: ClockStatePayload): void {
+  vnow.value = c.vnow;
+  currentScale.value = c.scale;
+  growthInfo.value = c.growth;
+}
+
 const unlistens: Array<() => void> = [];
 let disposed = false;
 
+/** 跨标签页（Web 直链设置页）读取主窗写入的时钟快照。 */
+function onClockStorage(event: StorageEvent): void {
+  if (event.key !== CLOCK_STATE_STORAGE_KEY || !event.newValue) return;
+  try { receiveClock(JSON.parse(event.newValue) as ClockStatePayload); } catch { /* 损坏快照忽略 */ }
+}
+
 onMounted(() => {
-  void listenNative<{ vnow: string; scale: number; growth: ReturnType<LifeEngine['getGrowthSummary']> }>('clock-state', (c) => {
-    vnow.value = c.vnow;
-    currentScale.value = c.scale;
-    growthInfo.value = c.growth;
-  }).then((un) => { if (disposed) un(); else unlistens.push(un); });
+  void listenNative<ClockStatePayload>('clock-state', receiveClock).then((un) => {
+    if (disposed) un(); else unlistens.push(un);
+  });
+  // 同页内嵌覆盖层（Web）：主循环通过 DOM 事件桥推送。
+  unlistens.push(listenLocal<ClockStatePayload>('clock-state', receiveClock));
+  window.addEventListener('storage', onClockStorage);
 });
 
 // 语言在设置窗（独立 WebView）里切换：同步到托盘/设置窗标题与主窗界面。
@@ -302,6 +333,7 @@ watch(localeMode, (mode) => send('ui-locale-changed', mode));
 onBeforeUnmount(() => {
   disposed = true;
   for (const un of unlistens) un();
+  window.removeEventListener('storage', onClockStorage);
   // 关窗前把尚未发出的改动落下，避免丢最后一次拖动。
   if (emitFrame) { cancelAnimationFrame(emitFrame); emitFrame = 0; emitSettings(); }
   clearTimeout(tapTimer);
@@ -317,6 +349,21 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
       <div class="top-copy">
         <h1>{{ t('settings.title') }}</h1>
         <p class="eyebrow">Emerge · Particle Life</p>
+      </div>
+      <div class="top-actions">
+        <button
+          v-if="!isDesktop && !props.embedded"
+          type="button"
+          class="btn-outline"
+          @click="backToApp"
+        >{{ t('settings.backToApp') }}</button>
+        <button
+          v-if="props.embedded"
+          type="button"
+          class="btn-close"
+          :aria-label="t('settings.close')"
+          @click="emit('close')"
+        >✕</button>
       </div>
     </header>
 
@@ -425,7 +472,7 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
       </div>
     </section>
 
-    <section class="card">
+    <section v-if="isDesktop" class="card">
       <h2>{{ t('section.behavior') }}</h2>
       <p v-if="windowError" role="alert" class="note error">
         <span aria-hidden="true">⚠</span> {{ windowError }}
@@ -471,7 +518,7 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
         @pointerdown="startPlacement" @pointermove="movePlacement"
         @pointerup="placing = false" @pointercancel="placing = false" @lostpointercapture="placing = false"
         @keydown="keyPlacement">
-        <span class="screen-label">{{ t('position.desktop') }}</span>
+        <span class="screen-label">{{ isDesktop ? t('position.desktop') : t('position.page') }}</span>
         <span class="placement-marker" :style="{ left: `${s.positionX * 100}%`, top: `${s.positionY * 100}%` }">✦</span>
       </div>
       <div class="placement-meta">
@@ -629,7 +676,7 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
       :title="t('footer.title')"
       @click="onSecretTap"
     >
-      {{ t('footer.hint') }}
+      {{ t(isDesktop ? 'footer.hint' : 'footer.hintWeb') }}
     </p>
   </div>
 </template>
@@ -746,6 +793,38 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
 
 .top-copy {
   min-width: 0;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 内嵌覆盖层的关闭按钮：与文字按钮同级的轻量圆形入口 */
+.btn-close {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: 14px/1 var(--font-ui);
+  cursor: pointer;
+  transition:
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease),
+    background 0.14s var(--ease),
+    transform 0.12s var(--ease);
+}
+.btn-close:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.btn-close:active {
+  transform: scale(0.96);
 }
 
 .general-row {
@@ -886,6 +965,7 @@ h1 {
 
 /* ===== 卡片：白底 + 1px 边框 + 圆角 12，无阴影，悬停边框加深 ===== */
 .card {
+  box-sizing: border-box;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
@@ -1558,6 +1638,14 @@ h2 {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+/* Web 宽视口：内容列限宽居中，比例对齐桌面设置窗（420pt）；桌面窄窗不受影响。
+   放在样式末尾让 auto 边距覆盖 .top / .footer-hint 的 2px 侧边距。 */
+.page > * {
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 @media (max-width: 440px) {

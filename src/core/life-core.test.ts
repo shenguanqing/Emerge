@@ -2,12 +2,12 @@
 // 运行：npm run test:core
 import test from 'node:test';
 import { LifeEngine } from './LifeEngine';
-import { DEFAULT_LIFE_PARAMS } from './types';
+import { createLifeState, DEFAULT_LIFE_PARAMS } from './types';
 import assert from 'node:assert/strict';
 
 import { generateDNAFromSeed, mulberry32 } from './DNAEngine';
 import { MemoryEngine, createMemoryState, dayKey } from './MemoryEngine';
-import { GrowthEngine, formStage, formStructure } from './GrowthEngine';
+import { FORM_ORBIT_LANES, GrowthEngine, formStage, formStructure, type FormStructure } from './GrowthEngine';
 import {
   MemoryStorage,
   loadLife,
@@ -122,11 +122,12 @@ test('四形态：阶段阈值与结构复杂度单调递增', () => {
   assert.ok(o.orbitCount < a.orbitCount && a.orbitCount < c.orbitCount && c.orbitCount < e.orbitCount);
   assert.ok(o.orbitCount <= 6);
   assert.ok(a.orbitCount >= 5 && a.orbitCount <= 12);
-  assert.ok(c.orbitCount >= 8 && c.orbitCount <= 12);
-  assert.ok(e.orbitCount >= 12 && e.orbitCount <= 16);
-  assert.equal(o.neural, 0);
+  assert.ok(c.orbitCount >= 17 && c.orbitCount <= 19);
+  assert.equal(e.orbitCount, FORM_ORBIT_LANES);
+  assert.ok(o.neural > 0 && o.neural < 0.1);
+  assert.ok(o.neural < a.neural && a.neural < c.neural && c.neural < e.neural);
   assert.ok(c.neural > 0.5 && e.neural > 0.9);
-  // 径向脉络：Awaken 起出现，Conscious 最密，Emerge 部分让位给环轨。
+  // 弯曲脉络：Awaken 起出现，Conscious 最密，Emerge 部分让位给环轨。
   assert.equal(o.spoke, 0);
   assert.ok(a.spoke > 0.5 && c.spoke > 0.9);
   assert.ok(e.spoke > 0.2 && e.spoke < c.spoke);
@@ -135,6 +136,52 @@ test('四形态：阶段阈值与结构复杂度单调递增', () => {
   assert.ok(o.coreGlow < e.coreGlow);
   // 轨道永不封口。
   assert.ok(formStructure(1.0).orbitBroken > 0.7);
+});
+
+test('四形态：阶段边界保留存档语义，结构连续且参数有界', () => {
+  const continuousKeys = Object.keys(formStructure(0)).filter((key) => key !== 'orbitCount') as (keyof FormStructure)[];
+  for (const [threshold, before, after] of [
+    [0.3, 'origin', 'awaken'],
+    [0.55, 'awaken', 'conscious'],
+    [0.85, 'conscious', 'emerge'],
+  ] as const) {
+    assert.equal(formStage(threshold - 1e-5), before);
+    assert.equal(formStage(threshold), after);
+    const left = formStructure(threshold - 1e-5);
+    const right = formStructure(threshold + 1e-5);
+    for (const key of continuousKeys) assert.ok(Math.abs(right[key] - left[key]) < 0.001, `${threshold}: ${key}`);
+    assert.ok(Math.abs(right.orbitCount - left.orbitCount) <= 1);
+  }
+  assert.deepEqual(formStructure(-1), formStructure(0));
+  assert.deepEqual(formStructure(2), formStructure(1));
+  let previous = formStructure(0);
+  for (let i = 0; i <= 100; i++) {
+    const form = formStructure(i / 100);
+    for (const key of continuousKeys) assert.ok(Number.isFinite(form[key]) && form[key] >= 0 && form[key] <= 1, key);
+    assert.ok(Number.isInteger(form.orbitCount) && form.orbitCount >= 3 && form.orbitCount <= FORM_ORBIT_LANES);
+    assert.ok(form.orbitCount >= previous.orbitCount);
+    assert.ok(form.neural >= previous.neural);
+    assert.ok(form.orbitBroken > 0.7);
+    previous = form;
+  }
+});
+
+test('四形态：DNA 尾迹不改变成长阶段和轨道条数，初始结构独立且一致', () => {
+  for (const growthFloor of [0, 0.2, 0.45, 0.7, 0.95, 1]) {
+    const common = { days: 1, interactionMinutes: 0, growthBias: 0.5, growthFloor };
+    const shortTail = new GrowthEngine({ ...common, tailProbability: 0 }).state;
+    const longTail = new GrowthEngine({ ...common, tailProbability: 1 }).state;
+    assert.equal(shortTail.growth, longTail.growth);
+    assert.equal(shortTail.stage, longTail.stage);
+    assert.equal(shortTail.form.orbitCount, longTail.form.orbitCount);
+    assert.ok(shortTail.form.streamArc <= longTail.form.streamArc);
+    if (growthFloor > 0.85) assert.ok(shortTail.form.streamArc < longTail.form.streamArc);
+  }
+  const first = createLifeState(), second = createLifeState();
+  assert.deepEqual(first.form, formStructure(0));
+  assert.equal(first.form.orbitCount, 3);
+  first.form.orbitCount = FORM_ORBIT_LANES;
+  assert.equal(second.form.orbitCount, 3);
 });
 
 test('时间：深夜睡意最强、白天最活跃', () => {
@@ -321,7 +368,8 @@ test('真实互动：停留不挂机计分，远处移动不计分，附近温�
   engine.setPointer({ active: true, world: [10, 0, 0], worldVel: [0.5, 0, 0] });
   advance();
   assert.equal(memory.state.interactionMinutes, 0);
-  engine.setPointer({ active: true, world: [0.1, 0, 0], worldVel: [0.5, 0, 0] });
+  // 20% 团大小的新外缘：0.5 已超出旧感知半径，放大后仍应计入温和互动。
+  engine.setPointer({ active: true, world: [0.5, 0, 0], worldVel: [0.5, 0, 0] });
   advance();
   assert.ok(memory.state.interactionMinutes > 0.1);
   engine.setPointer({ active: true, world: [0.1, 0, 0], worldVel: [0, 0, 0] });

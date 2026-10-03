@@ -8,6 +8,10 @@
 
 export type FormStage = 'origin' | 'awaken' | 'conscious' | 'emerge';
 
+/** 渲染拓扑上限：两个 GPU 后端使用相同的轨道与节点编号。 */
+export const FORM_ORBIT_LANES = 30;
+export const FORM_NODE_COUNT = 24;
+
 export interface GrowthInputs {
   /** 陪伴天数。 */
   days: number;
@@ -18,7 +22,7 @@ export interface GrowthInputs {
   growthFloor?: number;
   /** DNA 成长倾向 0..1。 */
   growthBias: number;
-  /** DNA 尾迹倾向 0..1（影响轨道/弧流密度）。 */
+  /** DNA 尾迹倾向 0..1（微调弧流强度，不改变轨道条数）。 */
   tailProbability: number;
 }
 
@@ -27,11 +31,11 @@ export interface GrowthInputs {
  * 与 HologramField 着色器曲线保持一致，禁止在这里单独改公式。
  */
 export interface FormStructure {
-  /** 核心亮度与半径：Origin 很小 → Emerge 极亮。 */
+  /** 核心组织亮度：随成长增强，保留可辨的粒子与间隙。 */
   coreGlow: number;
   /** 轨道密度 0..1（映射到轨道条数，永远不完整）。 */
   orbitDensity: number;
-  /** 轨道条数 2..30（Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30）。 */
+  /** 轨道条数 3..30（Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30）。 */
   orbitCount: number;
   /** 轨道不完整程度（始终偏高，禁止封口成圆）。 */
   orbitBroken: number;
@@ -39,9 +43,9 @@ export interface FormStructure {
   vortex: number;
   /** 神经网节点密度、连线活跃度。 */
   neural: number;
-  /** 径向脉络：核心→外壳辐射丝（Awaken 起，Emerge 部分让位给环轨）。 */
+  /** 弯曲脉络：连接核心与局部节点（Awaken 起，Emerge 部分让位给环轨）。 */
   spoke: number;
-  /** 粒子膜完整度（允许缺口）。 */
+  /** 分区孔隙膜与断续经向微脉络的组织程度，补足体积并保留暗缝。 */
   membrane: number;
   /** 外围碎片与独立粒子群。 */
   fragment: number;
@@ -80,21 +84,21 @@ export function formStage(growth: number): FormStage {
 
 /**
  * 由成长度推导结构参数。曲线与 HologramField GLSL 一致；
- * tailProbability 只微调轨道/弧流上限，不改变阶段身份。
+ * tailProbability 只微调弧流强度，不改变阶段身份与轨道条数。
  */
 export function formStructure(growth: number, tailProbability = 0.5): FormStructure {
   const g = clamp01(growth);
   const tail = clamp01(tailProbability);
-  // 轨道：2 + 28·g^1.6 → Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30。
+  // 轨道：3 + 27·g^1.6 → Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30。
   const orbitDensity = Math.pow(g, 1.6);
-  const orbitCount = 3 + 11 * orbitDensity * (0.85 + 0.3 * tail);
+  const orbitCount = 3 + (FORM_ORBIT_LANES - 3) * orbitDensity;
   return {
     coreGlow: 0.28 + 0.72 * g,
     orbitDensity,
-    orbitCount: Math.min(16, Math.round(orbitCount)),
+    orbitCount: Math.min(FORM_ORBIT_LANES, Math.round(orbitCount)),
     orbitBroken: 0.72 + 0.28 * (1 - g),
     vortex: 0.22 + 0.78 * smoothstep(0.12, 0.55, g),
-    neural: smoothstep(0.3, 0.85, g),
+    neural: smoothstep(0.1, 0.78, g),
     spoke: smoothstep(0.2, 0.5, g) * (1 - 0.55 * smoothstep(0.78, 1, g)),
     membrane: smoothstep(0.18, 0.55, g),
     fragment: smoothstep(0.5, 0.9, g),

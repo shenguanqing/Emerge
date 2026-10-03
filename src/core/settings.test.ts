@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS, diffSettings, loadSettings, mergeSettingsDraft, patchSettings, saveSettings, SETTINGS_STORAGE_KEY } from './settings';
+import { bodyHitRadius } from './types';
 
 function storage(): void {
   const data = new Map<string, string>();
@@ -53,4 +54,25 @@ test('同字段事件回放不会覆盖本地待提交值，未编辑字段仍�
   assert.equal(merged.editing.brightness, 0.8);
   assert.equal(merged.editing.theme, 'sage');
   assert.deepEqual(diffSettings(merged.saved, merged.editing), { brightness: 0.8 });
+});
+
+test('团大小标定放大后保留存档百分比，命中范围覆盖新外缘并保留小尺寸余量', () => {
+  storage();
+  assert.equal(loadSettings().bodyScale, 0.8, '默认为 80%');
+  for (const bodyScale of [0.1, 0.4, 1]) {
+    saveSettings({ ...DEFAULT_SETTINGS, bodyScale });
+    assert.equal(loadSettings().bodyScale, bodyScale, '10%–100% 存档无需迁移');
+  }
+  saveSettings({ ...DEFAULT_SETTINGS, bodyScale: 0.4 });
+  const scale = loadSettings().bodyScale;
+  const radius = bodyHitRadius(scale, 1, 0.01, 44);
+  assert.ok(radius > 80 && radius < 90, '默认尺寸可命中新扩大外缘的 80px，90px 仍在团外');
+  const breathingRadius = bodyHitRadius(scale, 1.08, 0.01, 44);
+  assert.ok(breathingRadius > 88 && breathingRadius < 90, '呼吸外扩同时扩大命中包络');
+  assert.equal(bodyHitRadius(0.1, 1, 0.01, 44), 44, '最小尺寸保留手指命中余量');
+  assert.ok(bodyHitRadius(1, 1, 0.01, 44) > 200, '100% 保留最大身体包络');
+  saveSettings({ ...DEFAULT_SETTINGS, bodyScale: 0 });
+  assert.equal(loadSettings().bodyScale, 0.1);
+  saveSettings({ ...DEFAULT_SETTINGS, bodyScale: 2 });
+  assert.equal(loadSettings().bodyScale, 1);
 });

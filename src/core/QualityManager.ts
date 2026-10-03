@@ -1,7 +1,7 @@
 /**
  * 质量管理：Low / Medium / High / Ultra 四档控制粒子预算与渲染开销，
  * FPS 采样 + 滞回升降档；无交互时 60 → 30 → 15 FPS 低功耗调度，
- * 任何交互立即恢复。core 模块纯 TypeScript，不依赖渲染器与 DOM。
+ * 任何交互恢复到配置的帧率上限。core 模块纯 TypeScript，不依赖渲染器与 DOM。
  */
 
 export type QualityTier = 'low' | 'medium' | 'high' | 'ultra';
@@ -45,8 +45,12 @@ export interface QualitySampleResult {
 
 export class QualityManager {
   tier: QualityTier = 'high';
-  /** 低功耗目标帧率：60（活跃）→ 30（闲置 20s）→ 15（闲置 60s）。 */
+  /** 低功耗目标帧率：默认 60→30→15，桌面上限为 30。 */
   targetFps = 60;
+
+  constructor(readonly maxFps = 60) {
+    this.targetFps = maxFps;
+  }
 
   /** 降档阈值：活跃时平均 FPS 低于该值持续 slowSeconds 降一档。 */
   downFps = 45;
@@ -77,13 +81,13 @@ export class QualityManager {
 
     // ---- 低功耗帧调度：闲置逐步降帧，交互立即恢复 ----
     if (idleSeconds >= 60 && !musicActive) {
-      this.targetFps = 15;
+      this.targetFps = Math.min(15, this.maxFps);
       this.idleFps15 = true;
     } else if (idleSeconds >= 20) {
-      this.targetFps = 30;
+      this.targetFps = Math.min(30, this.maxFps);
       this.idleFps30 = true;
     } else {
-      this.targetFps = 60;
+      this.targetFps = this.maxFps;
       this.idleFps30 = false;
       this.idleFps15 = false;
     }
@@ -100,7 +104,7 @@ export class QualityManager {
       if (fps < Math.min(this.downFps, this.targetFps * 0.75)) {
         this.slowTimer += dt;
         this.fastTimer = 0;
-      } else if (this.targetFps === 60 && fps >= this.upFps) {
+      } else if (this.targetFps === this.maxFps && fps >= this.upFps * this.maxFps / 60) {
         this.fastTimer += dt;
         this.slowTimer = 0;
       } else {

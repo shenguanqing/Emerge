@@ -477,8 +477,7 @@ fn show_onboarding_if_needed(app: AppHandle, existing_life: bool) -> Result<(), 
 
 #[tauri::command]
 fn complete_onboarding(app: AppHandle) -> Result<(), String> {
-  open_settings_window(&app);
-  if app.get_webview_window("settings").is_none() { return Err(tr("error.openSettings").into()); }
+  // 引导完成即收尾：只落完成标记并关闭欢迎窗，不再顺带打开设置。
   if let Err(error) = save_onboarding_done(&onboarding_path(&app)?) {
     if let Some(welcome) = app.get_webview_window("welcome") { let _ = welcome.set_focus(); }
     return Err(error);
@@ -491,6 +490,15 @@ fn complete_onboarding(app: AppHandle) -> Result<(), String> {
 fn onboarding_pick_music(app: AppHandle) -> Result<(), String> {
   ensure_file_music_available()?;
   handle_tray_event(&app, "pickmusic");
+  Ok(())
+}
+
+/// 供欢迎引导页停止文件音乐：与托盘「停止音乐」同一通道（music-file 空路径）。
+#[tauri::command]
+fn stop_music(app: AppHandle) -> Result<(), String> {
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.emit("music-file", "");
+  }
   Ok(())
 }
 
@@ -625,7 +633,8 @@ fn main() {
       open_onboarding,
       show_onboarding_if_needed,
       complete_onboarding,
-      onboarding_pick_music
+      onboarding_pick_music,
+      stop_music
     ])
     .plugin(
       tauri_plugin_window_state::Builder::default()

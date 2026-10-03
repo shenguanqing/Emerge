@@ -1,4 +1,4 @@
-import { createLifeState, type LifeParams, type LifeState } from './types';
+import { BODY_BASE_RADIUS, createLifeState, type LifeParams, type LifeState } from './types';
 import { PointerPerception, type PointerReading } from './PointerPerception';
 import { EmotionEngine } from './EmotionEngine';
 import { BehaviorEngine } from './BehaviorEngine';
@@ -64,7 +64,7 @@ export class LifeEngine {
   private nearbyClick = false;
 
   setVisible(visible: boolean): void { this.visible = visible; }
-  setInteractionScale(scale: number): void { this.interactionRadius = Math.max(0.2, 0.85 * scale * 2.6); }
+  setInteractionScale(scale: number): void { this.interactionRadius = Math.max(0.2, BODY_BASE_RADIUS * scale * 2.6); }
   getGrowthSummary() {
     const m = this.memory?.state;
     return m ? { lifeId: this.state.lifeId, growth: this.state.growth, companionMinutes: m.totalMinutes,

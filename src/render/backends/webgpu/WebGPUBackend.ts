@@ -1,5 +1,5 @@
 import { HOLOGRAM_WGSL, HOLOGRAM_SIGNAL_WGSL, ATTENTION_SIGNAL_WGSL } from '../../HologramField';
-import { MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
+import { BODY_BASE_RADIUS, MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
 import { createParticleInitData } from '../particleInit';
 import { DEFAULT_CAMERA, viewMatrix, type OrbitCamera } from '../../ViewState';
 
@@ -14,7 +14,7 @@ struct Sim {
   data0: vec4f,          // dt, time, breath, damping
   core_shellK: vec4f,    // core.xyz, shellK
   data2: vec4f,          // coreG, curlStrength, curlFreq, curlSpeed
-  data3: vec4f,          // count, pad, pad, pad
+  data3: vec4f,          // count, thoughtPulse, structureTime, pad
   data4: vec4f,          // formMix, breathWave, revealT, revealSeconds
   data5: vec4f,          // bodyBase, swirlBase, musicBass, musicTreble
   pointerPos_act: vec4f, // pointer.xyz, active(0..1)
@@ -144,7 +144,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let curlFreq = sim.data2.z;
   let curlSpeed = sim.data2.w;
   let bodyBase = sim.data5.x;
-  let sizeN = bodyBase / 0.85;
+  let sizeN = bodyBase / ${BODY_BASE_RADIUS};
   let swirlBase = sim.data5.y;
   let formMix = sim.data4.x;
   let breathWave = sim.data4.y;
@@ -160,11 +160,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
   let dir = vec3f(cos(a1) * s2, sin(a1) * s2, a2);
 
   let contractMul = 1.0 - 0.12 * sim.data7.z;
-  var anchor = hologramAnchor(seed, sim.data3.z, sim.data11.x) * bodyBase * breath * contractMul;
+  var anchor = hologramAnchor(seed, sim.data3.z, sim.data11.x, sim.data11.y) * bodyBase * breath * contractMul;
 
   let aim = vec3f(cos(sim.cognition.x), sin(sim.cognition.x), 0.0);
   let directed = smoothstep(0.1, 0.9, dot(normalize(anchor + vec3f(0.00001)), aim));
-  anchor += aim * bodyBase * sim.cognition.y * directed * 0.34;
+  let attentionMobility = select(1.0, 0.15, seed < 0.07);
+  anchor += aim * bodyBase * sim.cognition.y * directed * 0.18 * attentionMobility;
+  // 成熟思绪只短暂展开朝向关注点的身体脉络，保留核的稳定位置。
+  let thoughtBody = select(0.0, 1.0, seed >= 0.16 && seed < 0.74);
+  anchor += aim * bodyBase * sim.data3.y * smoothstep(0.55, 0.90, sim.data11.x)
+          * directed * thoughtBody * 0.035;
   anchor *= 1.0 - sim.cognition.w * 0.06;
   var stiffMul = 0.55;
   if (layer < 0.5) { stiffMul = 3.2; }
@@ -281,6 +286,7 @@ struct VOut {
   @location(5) axis: vec2f,
   @location(6) @interpolate(flat) filament: f32,
   @location(7) depthFade: f32,
+  @location(8) streamGlow: f32,
 };
 
 ${HOLOGRAM_SIGNAL_WGSL}
@@ -292,15 +298,16 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   let seed = p4.w;
   let layer = select(select(2.0, 1.0, seed < 0.84), 0.0, seed < 0.16);
   let coreGlow = 0.28 + 0.72 * r.data4.y;
-  let neural = smoothstep(0.30, 0.85, r.data4.y);
+  let neural = smoothstep(0.10, 0.78, r.data4.y);
   let spoke = smoothstep(0.20, 0.50, r.data4.y) * (1.0 - 0.55 * smoothstep(0.78, 1.00, r.data4.y));
   let streamArc = smoothstep(0.72, 0.98, r.data4.y);
   let isNeural = select(0.0, 1.0, seed >= 0.16 && seed < 0.34);
+  let isVolume = select(0.0, 1.0, seed >= 0.58 && seed < 0.66);
   let isSpoke = select(0.0, 1.0, seed >= 0.66 && seed < 0.74);
   let isArc = select(0.0, 1.0, seed >= 0.90);
   let isFrag = select(0.0, 1.0, seed >= 0.84 && seed < 0.90);
-  // 脉络末端趋亮：与 HologramField 的 along 同哈希（参考图 2 的末端亮节点）。
-  let along = pow(hash1(seed * 43.1), 0.75);
+  // 脉络末端趋亮：复用组织场实际路径坐标，亮节点与空间位置对应。
+  let along = pathwayPosition(seed);
 
   let clip = r.vp * vec4f(p4.xyz, 1.0);
   let depthFade = clamp(2.5 / max(clip.w, 0.001), 0.2, 2.0);
@@ -311,7 +318,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   reveal = reveal * reveal * (3.0 - 2.0 * reveal);
 
   var sizeMul = 0.9;
-  if (layer < 0.5) { sizeMul = 1.5; }
+  if (layer < 0.5) { sizeMul = 1.15; }
   if (layer > 0.5 && layer < 1.5) { sizeMul = 1.0; }
   sizeMul = sizeMul * mix(1.35, 1.0, r.data2.x);
   // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同）。
@@ -320,12 +327,20 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   if (layer < 0.5) { sizeMul = sizeMul * (1.0 + coreGlow * 0.12); }
   sizeMul = sizeMul * (1.0 + isArc * streamArc * 0.25);
   sizeMul = sizeMul * (1.0 + isSpoke * spoke * along * 0.18);
+  sizeMul = sizeMul * (1.0 + isVolume * 0.12);
+  sizeMul = sizeMul * (1.0 + select(0.0, 0.18 * r.data4.y, seed >= 0.34 && seed < 0.58));
+  sizeMul = sizeMul * (1.0 + select(0.0, 0.08, seed < 0.07));
   // 逐粒子大小差异：大点软芯、小点尘埃，避免均匀颗粒（与 WebGL2 同式）。
   sizeMul = sizeMul * (0.80 + 0.55 * hash1(seed * 57.3));
-  let filament = select(0.0, 1.0, seed >= 0.16 && seed < 0.84 && hash1(seed * 151.7) > 0.55);
-  let ahead = r.vp * vec4f(p4.xyz + velIn[ii].xyz * 0.04, 1.0);
+  // 身体与回流中约 35% 粒子沿真实速度拉成细丝，内部组织束保留细颗粒。
+  let velocity = velIn[ii].xyz;
+  let motion = smoothstep(0.02, 0.35, length(velocity));
+  let filamentSeed = select(0.0, 1.0, ((seed >= 0.16 && seed < 0.84) || seed >= 0.90)
+                                  && isVolume < 0.5 && hash1(seed * 151.7) > 0.65);
+  let filament = filamentSeed * motion;
+  let ahead = r.vp * vec4f(p4.xyz + velocity * 0.04, 1.0);
   let axis = normalize(ahead.xy / max(ahead.w, 0.001) - clip.xy / max(clip.w, 0.001) + vec2f(0.000001, 0.0));
-  let pointPx = r.data.x * depthFade * sizeMul * mix(1.0, 3.5, filament);
+  let pointPx = r.data.x * depthFade * sizeMul * mix(1.0, mix(1.5, 3.0, motion), filament);
   let halfNdc = corner * (pointPx / vec2f(r.data.y, r.data.z));
 
   var result: VOut;
@@ -335,19 +350,17 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   result.filament = filament;
   result.depthFade = depthFade;
   result.layer = layer;
-  result.alpha = reveal * mix(0.7, 1.0, r.data2.x) * (1.0 + r.data3.z * 0.2 * tw) * (1.0 - isFrag * 0.50) * mix(0.28, 0.62, filament) * select(1.0, 0.45, layer < 0.5);
-  if (seed >= 0.74 && seed < 0.84) { result.alpha *= 0.18; }
-  let orbitLane = floor(hash1(seed * 73.1 + 0.71) * 16.0);
-  if (seed >= 0.34 && seed < 0.66 && orbitLane > 3.0 + 11.0 * pow(r.data4.y, 1.6)) {
-    result.alpha *= mix(1.0, 0.15, smoothstep(0.45, 0.65, r.data4.y));
-  }
+  result.streamGlow = isArc * streamArc;
+  result.alpha = reveal * mix(0.7, 1.0, r.data2.x) * (1.0 + r.data3.z * 0.2 * tw) * (1.0 - isFrag * 0.50) * mix(0.42, 0.62, filament) * select(1.0, select(0.38, 0.90, seed < 0.07), layer < 0.5);
+  result.alpha *= 1.0 + isVolume * 0.45;
+  result.alpha *= hologramExposure(seed, r.data4.y);
   // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGL2 后端一致）。
   result.glowBoost = (0.70 + 0.60 * hash1(p4.w * 91.7 + 2.1))
                    * (1.0 + r.data3.y * 0.18 + r.data3.z * 0.14 * tw)
                    * (1.0 + isNeural * neural * 0.55 + isSpoke * spoke * (0.30 + 0.50 * along) + isArc * streamArc * 0.4)
                    * (1.0 + select(0.0, coreGlow * 0.08, layer < 0.5));
   result.glowBoost *= hologramSignal(seed, r.data3.w, r.data4.y);
-  result.glowBoost *= attentionSignal(seed, r.colCore.w, r.data.w, r.data4.w, r.colAura.w);
+  result.glowBoost *= attentionSignal(seed, r.colCore.w, r.data.w, r.data4.w, r.colAura.w, r.data4.y);
   // 卫星标记：远轨亮金大粒子（与 WebGL2 一致）。
   result.sat = select(0.0, 1.0, r.data4.y > 0.7 && seed >= 0.995);
   return result;
@@ -361,7 +374,7 @@ fn fs(vin: VOut) -> @location(0) vec4f {
   // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
   let s = smoothstep(1.0, 0.32, d);
   if (d > 1.0) { discard; }
-  var a = 0.05 + 0.95 * s * s;
+  var a = 0.06 + 0.94 * s;
   let hot = smoothstep(0.50, 0.05, d); // 白热火花芯
 
   // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
@@ -374,6 +387,9 @@ fn fs(vin: VOut) -> @location(0) vec4f {
   var layerAlpha = 0.55 + r.data4.z * 0.25;
   if (vin.layer < 0.5) { col = coreCol; layerAlpha = 0.72; }
   if (vin.layer > 0.5 && vin.layer < 1.5) { col = bodyCol; layerAlpha = 0.85; }
+  // 成熟回流逐步取得身体的材质密度；外围碎片保留稀疏暗底。
+  col = mix(col, mix(auraCol, bodyCol, 0.8), vin.streamGlow);
+  layerAlpha = mix(layerAlpha, 0.78, vin.streamGlow);
   let depthFade = vin.depthFade;
   var glow = mix(col, mix(r.colCore.xyz, vec3f(1.0), 0.20), hot * 0.06) // 火花芯烧白
            * (0.85 + 0.15 * depthFade) * sqrt(max(r.data4.x, 0.0)) * 1.15 * vin.glowBoost;
@@ -434,6 +450,8 @@ export class WebGPUBackend {
   private clearAlpha = 1;
   private readIdx = 0;
   private disposed = false;
+  private framePending = false;
+  private failed = false;
   private view: OrbitCamera = { ...DEFAULT_CAMERA };
 
   private constructor(
@@ -540,6 +558,7 @@ export class WebGPUBackend {
     });
     // 未捕获的管线/着色器校验错误上抛到诊断通道，避免静默黑屏。
     device.onuncapturederror = (ev) => {
+      this.failed = true;
       const w = window as typeof window & { __emergeErrors?: string[] };
       if (w.__emergeErrors && w.__emergeErrors.length < 20) w.__emergeErrors.push(`GPU: ${ev.error.message.slice(0, 300)}`);
     };
@@ -600,7 +619,7 @@ export class WebGPUBackend {
 
   /** 每帧执行一次 Compute 步进并渲染。 */
   frame(state: LifeState, dt: number): void {
-    if (this.disposed) return;
+    if (this.disposed || this.failed || this.framePending) return;
     const d = this.device;
 
     this.simData[0] = dt;
@@ -667,7 +686,7 @@ export class WebGPUBackend {
     this.renderData[25] = state.pulseBoost;
     this.renderData[26] = state.energy;
     this.renderData[27] = state.time;
-    this.renderData[28] = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / 0.85, 1.8));
+    this.renderData[28] = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / BODY_BASE_RADIUS, 1.8));
     this.renderData[29] = state.growth;
     this.renderData[30] = state.musicTreble;
     this.renderData[19] = state.focusAngle; this.renderData[31] = state.attention;
@@ -703,6 +722,15 @@ export class WebGPUBackend {
 
     d.queue.submit([encoder.finish()]);
     this.readIdx = write;
+    // RAF 只反映页面调度，不代表 GPU 已完成。最多保留一个未完成帧，
+    // 防止 GPU 变慢时持续积压计算、绘制和 uniform 写入。
+    this.framePending = true;
+    void d.queue.onSubmittedWorkDone().then(() => {
+      this.framePending = false;
+    }, () => {
+      this.failed = true;
+      this.framePending = false;
+    });
   }
 
   /** 质量档位：改变活跃粒子数（dispatch 与绘制数量）。 */
@@ -726,7 +754,7 @@ export class WebGPUBackend {
     aura: [number, number, number],
     brightness = 1,
   ): void {
-    this.sim.bodyBase = 0.85 * bodyScale;
+    this.sim.bodyBase = BODY_BASE_RADIUS * bodyScale;
     this.brightnessScale = brightness;
     this.renderData[32] = core[0];
     this.renderData[33] = core[1];

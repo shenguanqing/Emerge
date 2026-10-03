@@ -3,12 +3,16 @@
  * 音乐/系统声音驱动，观察空间与托盘共享同一音频生命周期。
  * Bass → 身体脉冲；Beat → 核心能量波；高频 → 外围活跃；高能 → 兴奋。
  */
-import { onBeforeUnmount, onMounted, ref, computed } from 'vue';
-import { isDesktop, invoke, listenNative } from '../platform/desktop';
+import { onBeforeUnmount, onMounted, ref, computed, watch } from 'vue';
+import { emitLocal, emitNative, isDesktop, invoke, listenNative } from '../platform/desktop';
 import { AudioSystem } from '../input/AudioSystem';
 import { t } from '../i18n';
 
-defineProps<{ controlsVisible: boolean }>();
+defineProps<{
+  controlsVisible: boolean;
+  /** 面板传送目标：观察空间侧栏默认；Web 主页弹层传 #web-music-panel。 */
+  target?: string;
+}>();
 const selectedName = ref('');
 const sourceStatus = ref<'off' | 'file' | 'paused' | 'starting' | 'system'>('off');
 const musicError = ref('');
@@ -20,6 +24,13 @@ let systemRevision = 0;
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const emit = defineEmits<{ features: [payload: unknown] }>();
+
+// 曲名/状态变化广播给引导页等其它面板：跨窗走原生事件，同页走本地事件桥。
+watch([selectedName, sourceStatus], ([name, status]) => {
+  const payload = { name, playing: status === 'file' || status === 'system' || status === 'starting' };
+  emitLocal('music-state', payload);
+  if (isDesktop) void emitNative('music-state', payload).catch(() => {});
+});
 
 const audio = new AudioSystem();
 (window as typeof window & { __emergeAudio?: AudioSystem }).__emergeAudio = audio;
@@ -253,7 +264,12 @@ onMounted(() => {
       systemFeatures = { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beat: false };
     }
     // 复用同一特征对象，避免每帧分配触发 GC 抖动；beat 由主循环消费后清零。
-    if (!isDesktop) sourceStatus.value = audio.active ? (audio.isPlaying() ? 'file' : 'paused') : 'off';
+    if (!isDesktop) {
+      sourceStatus.value = audio.active ? (audio.isPlaying() ? 'file' : 'paused') : 'off';
+      // 文件名可能来自引导页等其它入口（共享同一音频实例），这里同步显示。
+      const name = audio.active ? audio.activeFileName : '';
+      if (name !== selectedName.value) selectedName.value = name;
+    }
     const f = systemActive ? systemFeatures : audio.read(now);
     emit('features', f);
   };
@@ -269,7 +285,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport v-if="controlsVisible" defer to="#observatory-music">
+  <Teleport v-if="controlsVisible" defer :to="target ?? '#observatory-music'">
     <section class="music-panel" :aria-label="t('music.title')">
       <h2>{{ t('music.title') }}</h2>
       <p class="music-status" role="status">{{ t(`music.${sourceStatus}`) }}</p>

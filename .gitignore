@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# 编辑器本地历史
+.history/
+
 # Logs
 *.log
 

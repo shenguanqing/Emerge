@@ -3,7 +3,7 @@
  * core 模块只依赖纯 TypeScript 数据；渲染、输入与 UI 通过该契约连接，
  * 不反向依赖 Three.js、Vue 或 DOM。
  */
-import type { FormStage, FormStructure } from './GrowthEngine';
+import { formStructure, type FormStage, type FormStructure } from './GrowthEngine';
 
 /** 生命体连续可调参数（Phase 7 起由 EmotionEngine 驱动，Phase 1 提供初始值）。 */
 export interface LifeParams {
@@ -37,6 +37,19 @@ export interface LifeParams {
 
 /** 粒子缓冲按上限分配，质量档位只改变活跃数量（避免重分配）。 */
 export const MAX_PARTICLES = 100_000;
+
+/** 团大小 100% 对应的基础世界半径；存档只保存百分比，不保存此标定值。 */
+export const BODY_BASE_RADIUS = 1.28;
+
+/** 把呼吸中的身体包络换算为命中半径；最小交互余量由调用方给定。 */
+export function bodyHitRadius(
+  bodyScale: number,
+  breathScale: number,
+  worldPerPixel: number,
+  minimumPixels: number,
+): number {
+  return Math.max(1.6 * BODY_BASE_RADIUS * bodyScale * breathScale / worldPerPixel, minimumPixels);
+}
 
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
   particleCount: 32768,
@@ -97,7 +110,7 @@ export const DEFAULT_SIMULATION_PARAMS: SimulationParams = {
   curlStrength: 0.85,
   curlFrequency: 0.5,
   curlSpeed: 0.06,
-  bodyBase: 0.85,
+  bodyBase: BODY_BASE_RADIUS,
   swirlBase: 2.6,
   pointerRadius: 2.6,
   pointerPush: 1.8,
@@ -210,20 +223,7 @@ export function createLifeState(): LifeState {
     clickPos: [0, 0, 0],
     pulseBoost: 0,
     growth: 0,
-    form: {
-      coreGlow: 0.28,
-      orbitDensity: 0,
-      orbitCount: 2,
-      orbitBroken: 1,
-      vortex: 0.22,
-      neural: 0,
-      spoke: 0,
-      membrane: 0,
-      fragment: 0,
-      streamArc: 0,
-      pulse: 0,
-      depthFade: 0.42,
-    },
+    form: formStructure(0),
     sleepiness: 0,
     brightness: 1,
     musicBass: 0,

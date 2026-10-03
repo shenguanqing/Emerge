@@ -73,15 +73,15 @@ export interface WindowSettings {
 export type AppSettings = VisualSettings & WindowSettings;
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  bodyScale: 0.4,
+  bodyScale: 0.8,
   theme: 'gold',
   hue: 42,
   brightness: 1,
   pointScale: 1,
   topmost: true,
   clickthrough: true,
-  positionX: 0.9,
-  positionY: 0.77,
+  positionX: 0.5,
+  positionY: 0.5,
 };
 
 /** 旧主题 id 迁移，避免用户存档丢配色。 */
@@ -107,6 +107,9 @@ const clampNum = (v: unknown, min: number, max: number, fallback: number): numbe
     : fallback;
 
 export const SETTINGS_STORAGE_KEY = 'emerge.settings';
+
+/** 虚拟时钟广播的跨标签页快照键（同页走 DOM 事件，桌面走原生事件）。 */
+export const CLOCK_STATE_STORAGE_KEY = 'emerge.clock.state';
 
 export function loadSettings(): AppSettings {
   try {

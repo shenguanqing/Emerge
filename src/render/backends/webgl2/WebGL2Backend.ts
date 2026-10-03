@@ -1,7 +1,7 @@
 import { HOLOGRAM_GLSL, HOLOGRAM_SIGNAL_GLSL, ATTENTION_SIGNAL_GLSL } from '../../HologramField';
 import * as THREE from 'three';
 import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
-import { MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
+import { BODY_BASE_RADIUS, MAX_PARTICLES, type LifeParams, type LifeState, type SimulationParams } from '../../../core/types';
 import { createParticleInitData } from '../particleInit';
 import { cameraPosition, DEFAULT_CAMERA, type OrbitCamera } from '../../ViewState';
 
@@ -18,6 +18,7 @@ const SIM_W = 256;
 
 /** 速度更新：有机形体锚点 + 分层刚度 + 凝聚旋涡 + 核心吸引 + 湍流。 */
 const VEL_FRAG = /* glsl */ `
+uniform float uActiveCount;
 uniform float uDt;
 uniform float uTime;
 uniform float uStructureTime;
@@ -157,6 +158,9 @@ void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
   vec4 p4 = texture2D(texturePosition, uv);
   vec4 v4 = texture2D(textureVelocity, uv);
+  if (floor(gl_FragCoord.y) * resolution.x + floor(gl_FragCoord.x) >= uActiveCount) {
+    gl_FragColor = v4; return;
+  }
   vec3 p = p4.xyz;
   float seed = p4.w;
   vec3 v = v4.xyz;
@@ -171,13 +175,18 @@ void main() {
   float s2 = sqrt(max(1.0 - a2 * a2, 0.0));
   vec3 dir = vec3(cos(a1) * s2, sin(a1) * s2, a2);
 
-  float sizeN = uBodyBase / 0.85;
+  float sizeN = uBodyBase / ${BODY_BASE_RADIUS};
   float contractMul = 1.0 - 0.12 * uContract;
-  vec3 anchor = hologramAnchor(seed, uStructureTime, uGrowth) * uBodyBase * uBreath * contractMul;
+  vec3 anchor = hologramAnchor(seed, uStructureTime, uGrowth, uStreamArc) * uBodyBase * uBreath * contractMul;
 
   vec3 aim = vec3(cos(uFocusAngle), sin(uFocusAngle), 0.0);
   float directed = smoothstep(0.1, 0.9, dot(normalize(anchor + vec3(0.00001)), aim));
-  anchor += aim * uBodyBase * uAttention * directed * 0.34;
+  float attentionMobility = seed < 0.07 ? 0.15 : 1.0;
+  anchor += aim * uBodyBase * uAttention * directed * 0.18 * attentionMobility;
+  // 成熟思绪只短暂展开朝向关注点的身体脉络，保留核的稳定位置。
+  float thoughtBody = (seed >= 0.16 && seed < 0.74) ? 1.0 : 0.0;
+  anchor += aim * uBodyBase * uThoughtPulse * smoothstep(0.55, 0.90, uGrowth)
+          * directed * thoughtBody * 0.035;
   anchor *= 1.0 - uContemplation * 0.06;
   float stiffMul = layer < 0.5 ? 3.2 : (layer < 1.5 ? 1.0 : 0.55);
   // 受惊散开：身体/外围刚度暂时软化（核心软化更少，保持可辨）。
@@ -215,9 +224,9 @@ void main() {
   force += tangent * (uEnergy * 0.16 * sizeN) * smoothstep(4.5, 0.4, dist);
 
   // Curl Noise 流场：散度为零，长时间运动不散架、不固定循环；外围更活跃。
-  vec3 flowPos = p * uCurlFreq + vec3(0.0, 0.0, uTime * uCurlSpeed);
+  vec3 flowPos = p * uCurlFreq + vec3(0.0, 0.0, uTime * uCurlSpeed * (1.0 + 1.2 * uPulseBoost));
   float curlMul = layer < 0.5 ? 0.3 : (layer < 1.5 ? 1.0 : 1.5);
-  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * curlMul * sizeN * 0.10 * (1.0 - uContemplation * 0.8));
+  force += curlNoise(flowPos) * (uCurlStrength * (0.55 + 0.9 * uEnergy) * (1.0 + 0.7 * uPulseBoost) * curlMul * sizeN * 0.10 * (1.0 - uContemplation * 0.8));
 
   // 指针力场：物理存在（温和排斥）+ 高速冲击（冲击波 + 拖拽尾迹）。
   // 指针读数已经过感知延迟，此处只做纯力响应。
@@ -262,11 +271,13 @@ void main() {
 
 /** 位置更新：用最新速度积分。 */
 const POS_FRAG = /* glsl */ `
+uniform float uActiveCount;
 uniform float uDt;
 
 void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
   vec4 p4 = texture2D(texturePosition, uv);
+  if (floor(gl_FragCoord.y) * resolution.x + floor(gl_FragCoord.x) >= uActiveCount) { gl_FragColor = p4; return; }
   vec4 v4 = texture2D(textureVelocity, uv);
   vec3 p = p4.xyz + v4.xyz * uDt;
   gl_FragColor = vec4(p, p4.w);
@@ -300,6 +311,7 @@ varying float vSat;
 varying float vSpark;
 varying vec2 vAxis;
 varying float vFilament;
+varying float vStream;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -315,15 +327,16 @@ void main() {
   float sat = uGrowth > 0.7 && seed >= 0.995 ? 1.0 : 0.0;
   // 形态结构亮度：核心变亮、神经信号闪烁、弧流提亮、碎片压暗。
   float coreGlow = 0.28 + 0.72 * uGrowth;
-  float neural = smoothstep(0.30, 0.85, uGrowth);
+  float neural = smoothstep(0.10, 0.78, uGrowth);
   float spoke = smoothstep(0.20, 0.50, uGrowth) * (1.0 - 0.55 * smoothstep(0.78, 1.00, uGrowth));
   float streamArc = smoothstep(0.72, 0.98, uGrowth);
   float isNeural = (seed >= 0.16 && seed < 0.34) ? 1.0 : 0.0;
+  float isVolume = (seed >= 0.58 && seed < 0.66) ? 1.0 : 0.0;
   float isSpoke = (seed >= 0.66 && seed < 0.74) ? 1.0 : 0.0;
   float isArc = seed >= 0.90 ? 1.0 : 0.0;
   float isFrag = (seed >= 0.84 && seed < 0.90) ? 1.0 : 0.0;
-  // 脉络末端趋亮：与 HologramField 的 along 同哈希（参考图 2 的末端亮节点）。
-  float along = pow(hash1(seed * 43.1), 0.75);
+  // 脉络末端趋亮：复用组织场实际路径坐标，亮节点与空间位置对应。
+  float along = pathwayPosition(seed);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -334,37 +347,41 @@ void main() {
   float reveal = clamp((uRevealT - t0) / 0.8, 0.0, 1.0);
   reveal = reveal * reveal * (3.0 - 2.0 * reveal);
 
-  float sizeMul = (layer < 0.5 ? 1.5 : (layer < 1.5 ? 1.0 : 0.9)) * mix(1.35, 1.0, uFormMix);
+  float sizeMul = (layer < 0.5 ? 1.15 : (layer < 1.5 ? 1.0 : 0.9)) * mix(1.35, 1.0, uFormMix);
   // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同，与 WebGPU 后端一致）。
   float tw = sin(uTime * (2.5 + seed * 3.5) + seed * 40.0);
   sizeMul *= (1.0 + uPulseBoost * 0.15 + uEnergy * 0.12 * tw);
   sizeMul *= 1.0 + (layer < 0.5 ? coreGlow * 0.12 : 0.0);
   sizeMul *= 1.0 + isArc * streamArc * 0.25;
   sizeMul *= 1.0 + isSpoke * spoke * along * 0.18;
+  sizeMul *= 1.0 + isVolume * 0.12;
+  sizeMul *= 1.0 + ((seed >= 0.34 && seed < 0.58) ? 0.18 * uGrowth : 0.0);
+  sizeMul *= 1.0 + (seed < 0.07 ? 0.08 : 0.0);
   // 逐粒子大小差异必须参与 gl_PointSize 输出，与 WebGPU 同式。
   sizeMul *= 0.80 + 0.55 * hash1(seed * 57.3);
-  // 一部分身体粒子沿真实 GPU 速度绘成细光丝，受惊后随运动自然松散。
-  vFilament = (seed >= 0.16 && seed < 0.84 && hash1(seed * 151.7) > 0.55) ? 1.0 : 0.0;
+  // 身体与回流中约 35% 粒子沿真实速度拉成细丝，内部组织束保留细颗粒。
   vec3 velocity = texture2D(uVelTex, uv).xyz;
+  float motion = smoothstep(0.02, 0.35, length(velocity));
+  float filamentSeed = ((seed >= 0.16 && seed < 0.84) || seed >= 0.90)
+                     && isVolume < 0.5 && hash1(seed * 151.7) > 0.65 ? 1.0 : 0.0;
+  vFilament = filamentSeed * motion;
   vec4 ahead = projectionMatrix * modelViewMatrix * vec4(p + velocity * 0.04, 1.0);
   vec2 axis = ahead.xy / max(ahead.w, 0.001) - gl_Position.xy / max(gl_Position.w, 0.001);
   vAxis = normalize(axis + vec2(0.000001, 0.0));
-  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul * mix(1.0, 3.5, vFilament);
+  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul * mix(1.0, mix(1.5, 3.0, motion), vFilament);
   vGlow = depthFade;
   vLayer = layer;
+  vStream = isArc * streamArc;
   vAlpha = reveal * mix(0.7, 1.0, uFormMix) * (1.0 + uEnergy * 0.2 * tw);
-  vAlpha *= (1.0 - isFrag * 0.50) * mix(0.28, 0.62, vFilament);
-  if (layer < 0.5) vAlpha *= 0.45;
-  if (seed >= 0.74 && seed < 0.84) vAlpha *= 0.18;
-  float orbitLane = floor(hash1(seed * 73.1 + 0.71) * 16.0);
-  if (seed >= 0.34 && seed < 0.66 && orbitLane > 3.0 + 11.0 * pow(uGrowth, 1.6)) {
-    vAlpha *= mix(1.0, 0.15, smoothstep(0.45, 0.65, uGrowth));
-  }
+  vAlpha *= (1.0 - isFrag * 0.50) * mix(0.42, 0.62, vFilament);
+  vAlpha *= 1.0 + isVolume * 0.45;
+  if (layer < 0.5) vAlpha *= seed < 0.07 ? 0.90 : 0.38;
+  vAlpha *= hologramExposure(seed, uGrowth);
   // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGPU 后端一致）。
   vSpark = (0.70 + 0.60 * hash1(seed * 91.7 + 2.1))
          * (1.0 + uPulseBoost * 0.18 + uEnergy * 0.14 * tw);
   vSpark *= hologramSignal(seed, uTime, uGrowth);
-  vSpark *= attentionSignal(seed, uThoughtPhase, uFocusAngle, uAttention, uThoughtPulse);
+  vSpark *= attentionSignal(seed, uThoughtPhase, uFocusAngle, uAttention, uThoughtPulse, uGrowth);
   vSpark *= 1.0 + isNeural * neural * 0.55 + isSpoke * spoke * (0.30 + 0.50 * along)
           + isArc * streamArc * 0.4 + (layer < 0.5 ? coreGlow * 0.08 : 0.0);
 }
@@ -386,6 +403,7 @@ varying float vLayer;
 varying float vSpark;
 varying vec2 vAxis;
 varying float vFilament;
+varying float vStream;
 
 void main() {
   vec2 uv = gl_PointCoord - 0.5;
@@ -397,7 +415,7 @@ void main() {
   // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
   float s = smoothstep(1.0, 0.32, d);
   if (d > 1.0) discard;
-  float a = 0.05 + 0.95 * s * s;
+  float a = 0.06 + 0.94 * s;
   float hot = smoothstep(0.50, 0.05, d);  // 白热火花芯
 
   // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
@@ -407,6 +425,9 @@ void main() {
   vec3 auraCol = uAuraCol * (0.9 + uTreble * 0.85);
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
   float layerAlpha = vLayer < 0.5 ? 0.72 : (vLayer < 1.5 ? 0.85 : 0.55 + uTreble * 0.25);
+  // 成熟回流逐步取得身体的材质密度；外围碎片保留稀疏暗底。
+  col = mix(col, mix(auraCol, bodyCol, 0.8), vStream);
+  layerAlpha = mix(layerAlpha, 0.78, vStream);
   col = mix(col, mix(uCoreCol, vec3(1.0), 0.20), hot * 0.06); // 火花芯烧白
   col *= (0.85 + 0.15 * vGlow) * sqrt(max(uBrightness, 0.0)) * 1.15 * vSpark;
   col = mix(col, mix(uCoreCol, vec3(1.0), 0.28), vSat * 0.55); // 卫星粒子亮金白
@@ -420,6 +441,9 @@ export class WebGL2Backend {
   readonly id = 'webgl2' as const;
   particleCount: number;
   private readonly simH: number;
+  private readonly capacity: number;
+  private pendingFence: WebGLSync | null = null;
+  private gpuFailed = false;
 
   private readonly renderer: THREE.WebGLRenderer;
   private readonly gpu: GPUComputationRenderer;
@@ -438,15 +462,17 @@ export class WebGL2Backend {
     private readonly params: LifeParams,
     private readonly sim: SimulationParams,
     transparent = false,
+    capacity = MAX_PARTICLES,
   ) {
     this.renderer = new THREE.WebGLRenderer({
       canvas, antialias: false, alpha: transparent,
-      powerPreference: 'high-performance',
+      powerPreference: 'low-power',
     });
     this.renderer.setClearColor(0x000000, transparent ? 0 : 1);
     this.camera.position.set(0, 0, 7);
-    this.particleCount = params.particleCount;
-    this.simH = Math.ceil(MAX_PARTICLES / SIM_W);
+    this.capacity = Math.max(256, Math.min(MAX_PARTICLES, Math.floor(capacity)));
+    this.particleCount = Math.min(params.particleCount, this.capacity);
+    this.simH = Math.ceil(this.capacity / SIM_W);
 
     // 浮点渲染目标不可用时降级 HalfFloat，保持可用性。
     this.gpu = new GPUComputationRenderer(SIM_W, this.simH, this.renderer);
@@ -455,7 +481,7 @@ export class WebGL2Backend {
       this.gpu.setDataType(THREE.HalfFloatType);
     }
 
-    const init = createParticleInitData(MAX_PARTICLES);
+    const init = createParticleInitData(SIM_W * this.simH);
     const pos0 = this.gpu.createTexture();
     const vel0 = this.gpu.createTexture();
     const posInit = pos0.image.data as Float32Array;
@@ -469,6 +495,7 @@ export class WebGL2Backend {
     this.gpu.setVariableDependencies(this.velVar, [this.posVar, this.velVar]);
 
     const shared: Record<string, { value: number | THREE.Vector3 }> = {
+      uActiveCount: { value: this.particleCount },
       uDt: { value: 0 },
       uTime: { value: 0 },
       uBreath: { value: 1 },
@@ -513,7 +540,7 @@ export class WebGL2Backend {
       uMusicBass: { value: 0 },
       uMusicTreble: { value: 0 },
     };
-    Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt });
+    Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt, uActiveCount: shared.uActiveCount });
     Object.assign(this.velVar.material.uniforms, shared);
 
     const error = this.gpu.init();
@@ -525,13 +552,13 @@ export class WebGL2Backend {
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute(
       'position',
-      new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3),
+      new THREE.BufferAttribute(new Float32Array(this.capacity * 3), 3),
     );
-    const refs = new Float32Array(MAX_PARTICLES);
-    for (let i = 0; i < MAX_PARTICLES; i += 1) refs[i] = i;
+    const refs = new Float32Array(this.capacity);
+    for (let i = 0; i < this.capacity; i += 1) refs[i] = i;
     this.geometry.setAttribute('aRef', new THREE.BufferAttribute(refs, 1));
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 12);
-    this.geometry.setDrawRange(0, params.particleCount);
+    this.geometry.setDrawRange(0, this.particleCount);
 
     this.material = new THREE.ShaderMaterial({
       uniforms: {
@@ -570,8 +597,9 @@ export class WebGL2Backend {
 
   /** 质量档位：改变活跃粒子数（缓冲按 MAX 分配，无需重建）。 */
   setActiveCount(count: number): void {
-    this.particleCount = Math.min(count, MAX_PARTICLES);
+    this.particleCount = Math.min(count, this.capacity);
     this.geometry.setDrawRange(0, this.particleCount);
+    this.velVar.material.uniforms.uActiveCount.value = this.particleCount;
   }
 
   /** 质量档位：粒子基础尺寸；低于可读下限的点会闪烁成灰尘，钳到 1.35 逻辑像素。 */
@@ -589,7 +617,7 @@ export class WebGL2Backend {
     aura: [number, number, number],
     brightness = 1,
   ): void {
-    this.sim.bodyBase = 0.85 * bodyScale;
+    this.sim.bodyBase = BODY_BASE_RADIUS * bodyScale;
     this.brightnessScale = brightness;
     const shared = this.velVar.material.uniforms as Record<string, { value: number | THREE.Vector3 }>;
     shared.uBodyBase.value = this.sim.bodyBase;
@@ -601,7 +629,16 @@ export class WebGL2Backend {
 
   /** 每帧执行一次 GPU 模拟步进并渲染。 */
   frame(state: LifeState, dt: number): void {
-    if (this.disposed) return;
+    if (this.disposed || this.gpuFailed) return;
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    if (gl.isContextLost()) { this.gpuFailed = true; return; }
+    if (this.pendingFence) {
+      const status = gl.clientWaitSync(this.pendingFence, 0, 0);
+      if (status === gl.TIMEOUT_EXPIRED) return;
+      gl.deleteSync(this.pendingFence);
+      this.pendingFence = null;
+      if (status === gl.WAIT_FAILED) { this.gpuFailed = true; return; }
+    }
     const u = this.velVar.material.uniforms as Record<
       string,
       { value: number | THREE.Vector3 }
@@ -667,7 +704,7 @@ export class WebGL2Backend {
     m.uTime.value = state.time;
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
-    m.uBrightness.value = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / 0.85, 1.8));
+    m.uBrightness.value = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / BODY_BASE_RADIUS, 1.8));
     m.uTreble.value = state.musicTreble;
     m.uGrowth.value = state.growth;
     m.uMoodShift.value = state.moodShift;
@@ -676,6 +713,9 @@ export class WebGL2Backend {
     m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
     m.uVelTex.value = this.gpu.getCurrentRenderTarget(this.velVar).texture;
     this.renderer.render(this.scene, this.camera);
+    this.pendingFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!this.pendingFence) this.gpuFailed = true;
+    gl.flush();
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -703,6 +743,8 @@ export class WebGL2Backend {
     if (this.disposed) return;
     this.disposed = true;
     this.renderer.domElement.style.visibility = '';
+    if (this.pendingFence) (this.renderer.getContext() as WebGL2RenderingContext).deleteSync(this.pendingFence);
+    this.pendingFence = null;
     this.scene.remove(this.points);
     this.geometry.dispose();
     this.material.dispose();

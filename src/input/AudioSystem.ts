@@ -28,6 +28,7 @@ export class AudioSystem {
   private freq: Uint8Array | null = null;
   private audioEl: HTMLAudioElement | null = null;
   private objectUrl: string | null = null;
+  private fileName = '';
   private lastBeatAt = 0;
   private bassAvg = 0;
   /** 复用输出对象，避免每帧分配。 */
@@ -50,7 +51,15 @@ export class AudioSystem {
 
   /** 用户选择音乐文件后接入（须在用户手势中调用）。 */
   async attachFile(file: File): Promise<void> {
-    await this.attachUrl(URL.createObjectURL(file), true);
+    const url = URL.createObjectURL(file);
+    // attachUrl 内部会先 detach 清空文件名，接入成功后再记录。
+    await this.attachUrl(url, true);
+    this.fileName = file.name;
+  }
+
+  /** 最近一次接入的文件名；无文件音乐时为空（供界面显示曲名）。 */
+  get activeFileName(): string {
+    return this.fileName;
   }
 
   /** 以 URL / asset 路径接入（托盘选文件等场景）。 */
@@ -167,6 +176,7 @@ export class AudioSystem {
   detach(): void {
     this.active = false;
     this.pendingPlay = false;
+    this.fileName = '';
     if (this.audioEl) {
       this.audioEl.pause();
       this.audioEl.src = '';

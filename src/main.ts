@@ -24,7 +24,13 @@ function isSettingsWindow(): boolean {
   return tauriWin?.getCurrent?.()?.label === 'settings';
 }
 
-if (new URLSearchParams(window.location.search).get('window') === 'welcome') {
+if (import.meta.env.DEV && import.meta.env.VITE_EMERGE_DIAGNOSTIC === '1') {
+  // 在组件挂载之前截断：包括欢迎页中的独立粒子演示。
+  const message = document.createElement('p');
+  message.textContent = 'Emerge 隔离启动：粒子与音频初始化已暂停。系统重启原因正在排查；此页面不代表故障已修复。关闭请使用托盘退出或终端 Ctrl+C。';
+  message.style.cssText = 'padding:32px;max-width:640px;color:#eee;background:#202020;font:16px/1.8 system-ui';
+  document.querySelector('#app')?.replaceChildren(message);
+} else if (new URLSearchParams(window.location.search).get('window') === 'welcome') {
   document.documentElement.classList.add('settings-window');
   createApp(WelcomePanel).mount('#app');
 } else if (isSettingsWindow()) {

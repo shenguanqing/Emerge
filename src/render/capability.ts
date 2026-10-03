@@ -16,7 +16,7 @@ type GpuNavigator = Navigator & {
   };
 };
 
-export async function probeCapabilities(): Promise<CapabilityReport> {
+export async function probeCapabilities(probeWebGPU = true): Promise<CapabilityReport> {
   const report: CapabilityReport = {
     webgpu: { available: false, adapter: null },
     webgl2: { available: false, renderer: null },
@@ -25,7 +25,7 @@ export async function probeCapabilities(): Promise<CapabilityReport> {
   };
 
   const gpu = (navigator as GpuNavigator).gpu;
-  if (gpu) {
+  if (probeWebGPU && gpu) {
     try {
       const adapter = (await gpu.requestAdapter()) as
         | { info?: { vendor?: string; architecture?: string; description?: string } }

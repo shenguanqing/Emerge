@@ -41,3 +41,18 @@ export function listenNative<T>(
 export function emitNative(event: string, payload: unknown): Promise<void> {
   return (window as typeof window & TauriGlobal).__TAURI__?.event?.emit?.(event, payload) ?? Promise.resolve();
 }
+
+/**
+ * 同页事件桥：主应用内嵌的设置/引导覆盖层与主循环通信用。
+ * 桌面端面板在独立 WebView 中，跨窗走原生事件；Web 端同页走 DOM 事件。
+ * 桌面端发本地事件无副作用（主窗无同名监听，跨窗收不到 DOM 事件）。
+ */
+export function emitLocal(event: string, payload: unknown): void {
+  window.dispatchEvent(new CustomEvent(event, { detail: payload }));
+}
+
+export function listenLocal<T>(event: string, handler: (payload: T) => void): () => void {
+  const listener = (e: Event): void => handler((e as CustomEvent<T>).detail);
+  window.addEventListener(event, listener);
+  return () => window.removeEventListener(event, listener);
+}
