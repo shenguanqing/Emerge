@@ -5,6 +5,18 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+test('WebGL2 先更新速度，位置 pass 读取同帧新速度，防止低帧率核心外逸', () => {
+  const source = readFileSync(resolve(root, 'src/render/backends/webgl2/WebGL2Backend.ts'), 'utf8');
+  const positionShader = source.split('const POS_FRAG = /* glsl */ `')[1].split('`;')[0];
+  assert.match(positionShader, /texture2D\(uVelocityNext, uv\)/);
+  assert.doesNotMatch(positionShader, /texture2D\(textureVelocity, uv\)/);
+  const velocityPass = source.indexOf("addVariable('textureVelocity'");
+  const positionPass = source.indexOf("addVariable('texturePosition'");
+  assert.ok(velocityPass >= 0 && positionPass > velocityPass, '新速度必须先于位置写入下一缓冲');
+  const nextVelocity = source.indexOf('uVelocityNext.value = this.gpu.getAlternateRenderTarget(this.velVar).texture');
+  assert.ok(nextVelocity >= 0 && nextVelocity < source.indexOf('this.gpu.compute();'));
+});
+
 test('WebGL2 顶点/片元共同使用的 uniform 精度一致', () => {
   const source = readFileSync(resolve(root, 'src/render/backends/webgl2/WebGL2Backend.ts'), 'utf8');
   const stage = (name) => {

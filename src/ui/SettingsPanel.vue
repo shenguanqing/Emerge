@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { usePaletteAccent } from './usePaletteAccent';
 import SelectControl from './SelectControl.vue';
+import TimeControls, { type TimeControlCommand } from './TimeControls.vue';
 import { useSettingsSync } from './useSettingsSync';
 /**
  * 设置面板（独立小窗口，托盘「设置」打开）。
@@ -29,7 +30,7 @@ import { CLOCK_STATE_STORAGE_KEY } from '../core/settings';
  * embedded：主应用内嵌覆盖层（Web 端），无原生窗口标题栏，
  * 自带关闭按钮与 Esc 关闭，动作通过事件交给宿主处理。
  */
-const props = defineProps<{ embedded?: boolean }>();
+const props = defineProps<{ embedded?: boolean; preview?: boolean }>();
 const emit = defineEmits<{ close: []; 'replay-welcome': [] }>();
 
 const s = reactive<AppSettings>(loadSettings());
@@ -47,7 +48,7 @@ type ThemeMode = 'auto' | 'light' | 'dark';
 function readStoredTheme(): ThemeMode {
   try {
     const v = localStorage.getItem('emerge.ui.theme');
-    if (v === 'light' || v === 'dark') return v;
+    if (v === 'light' || v === 'dark' || v === 'auto') return v;
   } catch { /* ignore */ }
   return isDesktop ? 'auto' : 'dark';
 }
@@ -89,8 +90,6 @@ let tapTimer = 0;
 const vnow = ref('—');
 const growthInfo = ref<ReturnType<LifeEngine['getGrowthSummary']>>(null);
 const currentScale = ref(1);
-const lastAction = ref('');
-const scales = [1, 10, 100, 500, 2000];
 
 const STAGES = computed(() => [
   { id: 'origin', name: stageDisplayName('origin'), range: '0–30%', desc: t('stage.originDesc') },
@@ -136,47 +135,11 @@ function onSecretTap(): void {
     titleTaps.value = 0;
     titleLit.value = 0;
     timeUnlocked.value = true;
-    lastAction.value = t('time.unlocked');
   }
 }
 
-function applyScale(n: number): void {
-  currentScale.value = n;
-  lastAction.value = t('time.lastScale', { n });
-  send('time-control', { type: 'scale', value: n });
-}
-
-function timeAction(
-  type: 'advance' | 'interaction' | 'absence' | 'reset',
-  value: number,
-): void {
-  lastAction.value =
-    type === 'advance'
-      ? t('time.lastAdvance', { n: value })
-      : type === 'interaction'
-        ? t('time.lastInteraction', { n: value })
-        : type === 'absence'
-          ? t('time.lastAbsence', { n: value })
-          : t('time.lastReset');
-  send('time-control', { type, value });
-}
-
-/** 破坏性操作两段确认：第一次点亮确认态，4 秒内再点才执行。 */
-const confirmReset = ref(false);
-let resetArmTimer = 0;
-function onResetLife(): void {
-  if (!confirmReset.value) {
-    confirmReset.value = true;
-    lastAction.value = '';
-    clearTimeout(resetArmTimer);
-    resetArmTimer = window.setTimeout(() => {
-      confirmReset.value = false;
-    }, 4000);
-    return;
-  }
-  clearTimeout(resetArmTimer);
-  confirmReset.value = false;
-  timeAction('reset', 0);
+function sendTimeControl(command: TimeControlCommand): void {
+  send('time-control', command);
 }
 
 function emitSettings(): void {
@@ -337,7 +300,6 @@ onBeforeUnmount(() => {
   // 关窗前把尚未发出的改动落下，避免丢最后一次拖动。
   if (emitFrame) { cancelAnimationFrame(emitFrame); emitFrame = 0; emitSettings(); }
   clearTimeout(tapTimer);
-  clearTimeout(resetArmTimer);
   clearTimeout(defaultsArmTimer);
 });
 const accentStyle = usePaletteAccent(s, () => themeMode.value);
@@ -606,48 +568,10 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
       </details>
     </section>
 
-    <section v-if="timeUnlocked" class="card time-card">
-      <h2>{{ t('section.time') }}</h2>
-
-      <div class="clock">
-        <div class="clock-copy">
-          <span class="clock-label">{{ t('time.virtual') }}</span>
-          <span class="clock-time" aria-live="polite">{{ vnow }}</span>
-        </div>
-        <span class="clock-scale">×{{ currentScale }}</span>
-      </div>
-
-      <div class="segmented scales" role="group" :aria-label="t('time.virtual')">
-        <button
-          v-for="n in scales"
-          :key="n"
-          type="button"
-          class="seg"
-          :class="{ on: currentScale === n }"
-          :aria-pressed="currentScale === n"
-          @click="applyScale(n)"
-        >
-          ×{{ n }}
-        </button>
-      </div>
-
-      <div class="time-actions">
-        <button type="button" class="btn-outline" @click="timeAction('advance', 1)">{{ t('time.advance1') }}</button>
-        <button type="button" class="btn-outline" @click="timeAction('interaction', 60)">{{ t('time.interaction60') }}</button>
-        <button type="button" class="btn-outline" @click="timeAction('absence', 3)">{{ t('time.absence3') }}</button>
-        <button
-          type="button"
-          class="btn-outline danger"
-          :class="{ armed: confirmReset }"
-          :title="confirmReset ? undefined : t('time.resetTitle')"
-          @click="onResetLife"
-        >
-          {{ confirmReset ? t('time.resetConfirm') : t('time.reset') }}
-        </button>
-      </div>
-      <p v-if="lastAction" role="status" class="note ok">{{ lastAction }} ✓</p>
-      <p v-else class="note plain">{{ t('time.hint') }}</p>
-    </section>
+    <div v-if="timeUnlocked" class="card time-card">
+      <TimeControls :vnow="vnow" :scale="currentScale" :preview="preview"
+        :notice="t('time.unlocked')" @command="sendTimeControl" />
+    </div>
 
 
 
@@ -719,7 +643,7 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
   min-height: 100vh;
   min-height: 100dvh;
   margin: 0;
-  padding: 24px 20px 32px;
+  padding: max(24px, env(safe-area-inset-top, 0px)) 20px 32px;
   box-sizing: border-box;
   background: var(--bg-page);
   color: var(--text-primary);
@@ -1391,82 +1315,6 @@ h2 {
 }
 .paths .note.plain {
   margin-top: 8px;
-}
-
-/* ===== 时间加速（隐藏功能卡）：时钟读数 + 倍速分段 + 2×2 操作 ===== */
-.clock {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  border-radius: 8px;
-  background: var(--bg-sunken);
-}
-.clock-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.clock-label {
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--text-tertiary);
-}
-.clock-time {
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-.clock-scale {
-  flex: 0 0 auto;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.scales {
-  display: flex;
-  width: 100%;
-}
-.scales .seg {
-  flex: 1;
-  justify-content: center;
-  padding: 0;
-  font-variant-numeric: tabular-nums;
-}
-.time-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 12px;
-}
-.time-actions .btn-outline {
-  min-height: 36px;
-  padding: 6px 10px;
-  text-align: center;
-}
-.btn-outline.danger {
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-  color: var(--danger);
-}
-.btn-outline.danger:hover {
-  background: var(--danger-soft);
-  border-color: var(--danger);
-  color: var(--danger);
-}
-.btn-outline.danger.armed {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #ffffff;
-  font-weight: 600;
 }
 
 /* ===== 开关行：左侧仅文案，只有右侧开关可点 ===== */

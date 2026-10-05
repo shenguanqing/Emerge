@@ -166,7 +166,7 @@ void main() {
   vec3 v = v4.xyz;
 
   // 层级：0 核心/内旋涡 / 1 身体（轨道/神经/膜）/ 2 外围碎片与弧流。
-  float layer = seed < 0.16 ? 0.0 : (seed < 0.84 ? 1.0 : 2.0);
+  float layer = hologramLayer(seed);
   float h = hash1(seed * 41.53 + 0.37);
 
   // 个体方向：由种子确定的固定方向。
@@ -177,7 +177,7 @@ void main() {
 
   float sizeN = uBodyBase / ${BODY_BASE_RADIUS};
   float contractMul = 1.0 - 0.12 * uContract;
-  vec3 anchor = hologramAnchor(seed, uStructureTime, uGrowth, uStreamArc) * uBodyBase * uBreath * contractMul;
+  vec3 anchor = hologramAnchor(seed, uTime, uGrowth, uStreamArc) * uBodyBase * uBreath * contractMul;
 
   vec3 aim = vec3(cos(uFocusAngle), sin(uFocusAngle), 0.0);
   float directed = smoothstep(0.1, 0.9, dot(normalize(anchor + vec3(0.00001)), aim));
@@ -273,12 +273,13 @@ void main() {
 const POS_FRAG = /* glsl */ `
 uniform float uActiveCount;
 uniform float uDt;
+uniform sampler2D uVelocityNext;
 
 void main() {
   vec2 uv = gl_FragCoord.xy / resolution.xy;
   vec4 p4 = texture2D(texturePosition, uv);
   if (floor(gl_FragCoord.y) * resolution.x + floor(gl_FragCoord.x) >= uActiveCount) { gl_FragColor = p4; return; }
-  vec4 v4 = texture2D(textureVelocity, uv);
+  vec4 v4 = texture2D(uVelocityNext, uv);
   vec3 p = p4.xyz + v4.xyz * uDt;
   gl_FragColor = vec4(p, p4.w);
 }
@@ -295,6 +296,8 @@ uniform float uRevealSeconds;
 uniform float uFormMix;
 uniform float uTime;
 uniform float uStructureTime;
+uniform vec3 uRenderCore;
+uniform float uRenderRadius;
 uniform float uFocusAngle;
 uniform float uAttention;
 uniform float uThoughtPhase;
@@ -312,6 +315,8 @@ varying float vSpark;
 varying vec2 vAxis;
 varying float vFilament;
 varying float vStream;
+varying float vHeat;
+varying float vHalo;
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
 
@@ -323,20 +328,14 @@ void main() {
   vec4 p4 = texture2D(uPosTex, uv);
   vec3 p = p4.xyz;
   float seed = p4.w;
-  float layer = seed < 0.16 ? 0.0 : (seed < 0.84 ? 1.0 : 2.0);
+  float layer = hologramLayer(seed);
   float sat = uGrowth > 0.7 && seed >= 0.995 ? 1.0 : 0.0;
-  // 形态结构亮度：核心变亮、神经信号闪烁、弧流提亮、碎片压暗。
-  float coreGlow = 0.28 + 0.72 * uGrowth;
-  float neural = smoothstep(0.10, 0.78, uGrowth);
-  float spoke = smoothstep(0.20, 0.50, uGrowth) * (1.0 - 0.55 * smoothstep(0.78, 1.00, uGrowth));
   float streamArc = smoothstep(0.72, 0.98, uGrowth);
-  float isNeural = (seed >= 0.16 && seed < 0.34) ? 1.0 : 0.0;
-  float isVolume = (seed >= 0.58 && seed < 0.66) ? 1.0 : 0.0;
-  float isSpoke = (seed >= 0.66 && seed < 0.74) ? 1.0 : 0.0;
-  float isArc = seed >= 0.90 ? 1.0 : 0.0;
-  float isFrag = (seed >= 0.84 && seed < 0.90) ? 1.0 : 0.0;
-  // 脉络末端趋亮：复用组织场实际路径坐标，亮节点与空间位置对应。
-  float along = pathwayPosition(seed);
+  float isArc = mainRingWeight(seed);
+  float isFrag = seed >= 0.985 ? 1.0 : 0.0;
+  // 中央核白热、径向束有热量梯度；光晕仅由真实粒子热点产生。
+  vHeat = hologramHeat(seed, uTime, uGrowth);
+  vHalo = hologramHalo(seed, uTime, uGrowth);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -347,43 +346,47 @@ void main() {
   float reveal = clamp((uRevealT - t0) / 0.8, 0.0, 1.0);
   reveal = reveal * reveal * (3.0 - 2.0 * reveal);
 
-  float sizeMul = (layer < 0.5 ? 1.15 : (layer < 1.5 ? 1.0 : 0.9)) * mix(1.35, 1.0, uFormMix);
-  // 能量闪烁：高能量时粒子明暗呼吸式抖动（每粒子相位不同，与 WebGPU 后端一致）。
-  float tw = sin(uTime * (2.5 + seed * 3.5) + seed * 40.0);
-  sizeMul *= (1.0 + uPulseBoost * 0.15 + uEnergy * 0.12 * tw);
-  sizeMul *= 1.0 + (layer < 0.5 ? coreGlow * 0.12 : 0.0);
-  sizeMul *= 1.0 + isArc * streamArc * 0.25;
-  sizeMul *= 1.0 + isSpoke * spoke * along * 0.18;
-  sizeMul *= 1.0 + isVolume * 0.12;
-  sizeMul *= 1.0 + ((seed >= 0.34 && seed < 0.58) ? 0.18 * uGrowth : 0.0);
-  sizeMul *= 1.0 + (seed < 0.07 ? 0.08 : 0.0);
-  // 逐粒子大小差异必须参与 gl_PointSize 输出，与 WebGPU 同式。
-  sizeMul *= 0.80 + 0.55 * hash1(seed * 57.3);
-  // 身体与回流中约 35% 粒子沿真实速度拉成细丝，内部组织束保留细颗粒。
+  // 正常形态沿真实组织路径画细丝；驱散时随真实速度，避免残留骨架。
   vec3 velocity = texture2D(uVelTex, uv).xyz;
-  float motion = smoothstep(0.02, 0.35, length(velocity));
-  float filamentSeed = ((seed >= 0.16 && seed < 0.84) || seed >= 0.90)
-                     && isVolume < 0.5 && hash1(seed * 151.7) > 0.65 ? 1.0 : 0.0;
-  vFilament = filamentSeed * motion;
-  vec4 ahead = projectionMatrix * modelViewMatrix * vec4(p + velocity * 0.04, 1.0);
+  vec3 thread = hologramThread(seed, uTime, uGrowth);
+  float organized = hologramReadiness(seed, uGrowth) * smoothstep(0.55, 0.92, uFormMix);
+  float moving = smoothstep(0.45, 1.80, length(velocity));
+  float fine = step(0.06, hash1(seed * 151.7)) * step(0.07, seed);
+  float routed = step(0.0001, length(thread)) * fine * organized * (1.0 - moving * 0.75);
+  vFilament = max(routed * hologramFilament(seed), fine * moving);
+  vFilament *= 1.0 - vHalo * 0.55;
+  vec3 direction = mix(velocity * 0.04, normalize(thread + vec3(0.00001)) * 0.04, routed);
+  vec4 ahead = projectionMatrix * modelViewMatrix * vec4(p + direction, 1.0);
   vec2 axis = ahead.xy / max(ahead.w, 0.001) - gl_Position.xy / max(gl_Position.w, 0.001);
-  vAxis = normalize(axis + vec2(0.000001, 0.0));
-  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul * mix(1.0, mix(1.5, 3.0, motion), vFilament);
-  vGlow = depthFade;
+  vAxis = normalize(axis + vec2(0.000001, 0.0)) * hologramAspect(seed);
+
+  float sizeMul = (layer < 0.5 ? 0.96 : 1.02) * mix(1.22, 1.0, uFormMix);
+  float tw = sin(uTime * (2.5 + seed * 3.5) + seed * 40.0);
+  sizeMul *= (0.72 + 0.46 * hash1(seed * 57.3)) * (1.0 + uPulseBoost * 0.10 + uEnergy * 0.06 * tw);
+  sizeMul *= 1.0 + isArc * streamArc * 0.08;
+  sizeMul *= 1.0 + ((seed >= 0.50 && seed < 0.58) || (seed >= 0.74 && seed < 0.84) ? 0.16 : 0.0);
+  // 只有近侧少数游离粒子形成散景，不把各条组织路径随机放大成光斑。
+  vec4 centerView = modelViewMatrix * vec4(uRenderCore, 1.0);
+  float nearSide = clamp((mv.z - centerView.z) / max(uRenderRadius, 0.01), -1.0, 1.0);
+  float depthLayer = hologramTransmission(nearSide);
+  float bokeh = step(0.988, hash1(seed * 211.3)) * isFrag * smoothstep(0.35, 0.95, nearSide) * smoothstep(0.42, 0.88, uGrowth);
+  sizeMul *= hologramFocus(nearSide) * hologramLineScale(seed);
+  sizeMul *= 1.0 + bokeh + vHalo * 4.0;
+  if (seed < 0.07) { sizeMul *= 1.15; }
+  gl_PointSize = uPointSize * uPixelRatio * depthFade * sizeMul * mix(1.0, 5.2 * (0.70 + 0.6 * hash1(seed * 167.3)) * (1.0 + isArc * 0.4), vFilament);
+  vGlow = depthLayer;
   vLayer = layer;
-  vStream = isArc * streamArc;
-  vAlpha = reveal * mix(0.7, 1.0, uFormMix) * (1.0 + uEnergy * 0.2 * tw);
-  vAlpha *= (1.0 - isFrag * 0.50) * mix(0.42, 0.62, vFilament);
-  vAlpha *= 1.0 + isVolume * 0.45;
-  if (layer < 0.5) vAlpha *= seed < 0.07 ? 0.90 : 0.38;
-  vAlpha *= hologramExposure(seed, uGrowth);
-  // 火花明暗：逐粒子固定亮度差叠加闪烁，避免均匀光斑（与 WebGPU 后端一致）。
-  vSpark = (0.70 + 0.60 * hash1(seed * 91.7 + 2.1))
-         * (1.0 + uPulseBoost * 0.18 + uEnergy * 0.14 * tw);
+  vSat = sat;
+  vStream = isArc * smoothstep(0.28, 0.90, uGrowth);
+  vAlpha = reveal * mix(0.65, 1.0, uFormMix) * mix(0.46, 0.62, vFilament) * depthLayer;
+  vAlpha *= (1.0 - isFrag * 0.30) * (1.0 - bokeh * 0.70);
+  if (layer < 0.5) { vAlpha *= seed < 0.07 ? 0.70 : 0.55; }
+  vAlpha *= hologramExposure(seed, uGrowth) * mix(1.0, hologramCoverage(seed), routed);
+  vAlpha *= mix(1.0, 0.70, nearSide * nearSide);
+  vSpark = (0.75 + 0.40 * hash1(seed * 91.7 + 2.1)) * (1.0 + uPulseBoost * 0.12 + uEnergy * 0.06 * tw);
   vSpark *= hologramSignal(seed, uTime, uGrowth);
-  vSpark *= attentionSignal(seed, uThoughtPhase, uFocusAngle, uAttention, uThoughtPulse, uGrowth);
-  vSpark *= 1.0 + isNeural * neural * 0.55 + isSpoke * spoke * (0.30 + 0.50 * along)
-          + isArc * streamArc * 0.4 + (layer < 0.5 ? coreGlow * 0.08 : 0.0);
+  vSpark *= attentionSignal(seed, uThoughtPhase, uFocusAngle, uAttention, uThoughtPulse, uGrowth, uTime);
+
 }
 `;
 
@@ -404,6 +407,8 @@ varying float vSpark;
 varying vec2 vAxis;
 varying float vFilament;
 varying float vStream;
+varying float vHeat;
+varying float vHalo;
 
 void main() {
   vec2 uv = gl_PointCoord - 0.5;
@@ -411,17 +416,21 @@ void main() {
   // PointCoord 的 y 方向与投影相反。
   uv.y = -uv.y;
   vec2 oriented = vec2(dot(uv, axis), dot(uv, vec2(-axis.y, axis.x)));
-  float d = length(oriented * vec2(1.0, mix(1.0, 5.0, vFilament))) * 2.0;             // 0 中心 → 1 精灵边缘
-  // 火花剖面：边缘收紧、裙摆压暗，与白热芯一起构成高对比颗粒。
-  float s = smoothstep(1.0, 0.32, d);
-  if (d > 1.0) discard;
-  float a = 0.06 + 0.94 * s;
-  float hot = smoothstep(0.50, 0.05, d);  // 白热火花芯
+  float d = length(oriented * vec2(1.0, mix(1.0, max(length(vAxis), 1.0), vFilament))) * 2.0;             // 0 中心 → 1 精灵边缘
+  // 细长粒芯与圆形光晕独立计算，光晕不会被线条的窄轮廓裁掉。
+  float radial = length(uv) * 2.0;
+  if (radial > 1.0) discard;
+  float inner = d * (1.0 + vHalo * 5.2);
+  float edge = 1.0 - smoothstep(0.78, 1.0, d);
+  float sharp = 1.0 - smoothstep(0.30, 1.0, inner);
+  float halo = vHalo * exp(-radial * radial * 5.0) * 0.12;
+  float a = sharp * edge + halo * (1.0 - smoothstep(0.70, 1.0, radial));
+  float hot = 1.0 - smoothstep(0.05, 0.50, inner);
 
   // 分层配色：主题色 + 情绪微偏；呼吸提亮核心。
   vec3 coreCol = mix(uCoreCol, uCoreCol * vec3(1.0, 0.97, 0.92), uMoodShift * 0.35)
                * (0.72 + 0.18 * uBreathWave);
-  vec3 bodyCol = mix(uBodyCol, uBodyCol * vec3(1.0, 1.12, 1.18), uMoodShift * 0.25) * 1.55;
+  vec3 bodyCol = mix(uBodyCol, uBodyCol * vec3(1.0, 1.04, 1.08), uMoodShift * 0.25) * 1.48;
   vec3 auraCol = uAuraCol * (0.9 + uTreble * 0.85);
   vec3 col = vLayer < 0.5 ? coreCol : (vLayer < 1.5 ? bodyCol : auraCol);
   float layerAlpha = vLayer < 0.5 ? 0.72 : (vLayer < 1.5 ? 0.85 : 0.55 + uTreble * 0.25);
@@ -429,9 +438,12 @@ void main() {
   col = mix(col, mix(auraCol, bodyCol, 0.8), vStream);
   layerAlpha = mix(layerAlpha, 0.78, vStream);
   col = mix(col, mix(uCoreCol, vec3(1.0), 0.20), hot * 0.06); // 火花芯烧白
-  col *= (0.85 + 0.15 * vGlow) * sqrt(max(uBrightness, 0.0)) * 1.15 * vSpark;
+  col *= (0.92 + 0.08 * vGlow) * sqrt(max(uBrightness, 0.0)) * 1.15 * vSpark;
+  // 白金核、金橙通道与外层能量粒子，热量集中而非全屏曝光。
+  col = mix(col, mix(uCoreCol, vec3(1.0), 0.80), vHeat * 0.60);
+  col *= 1.0 + vHeat * 0.36;
   col = mix(col, mix(uCoreCol, vec3(1.0), 0.28), vSat * 0.55); // 卫星粒子亮金白
-  gl_FragColor = vec4(col * a, a * vAlpha * layerAlpha);
+  gl_FragColor = vec4(col, a * vAlpha * layerAlpha);
 }
 `;
 
@@ -489,9 +501,11 @@ export class WebGL2Backend {
     posInit.set(init.positions.subarray(0, posInit.length));
     velInit.set(init.velocities.subarray(0, velInit.length));
 
-    this.posVar = this.gpu.addVariable('texturePosition', POS_FRAG, pos0);
+    // GPUComputationRenderer 默认依赖只读上一帧。先写新速度，再让位置
+    // 显式读取下一缓冲，落实半隐式积分；15 FPS 下核心高刚度也稳定。
     this.velVar = this.gpu.addVariable('textureVelocity', VEL_FRAG, vel0);
-    this.gpu.setVariableDependencies(this.posVar, [this.posVar, this.velVar]);
+    this.posVar = this.gpu.addVariable('texturePosition', POS_FRAG, pos0);
+    this.gpu.setVariableDependencies(this.posVar, [this.posVar]);
     this.gpu.setVariableDependencies(this.velVar, [this.posVar, this.velVar]);
 
     const shared: Record<string, { value: number | THREE.Vector3 }> = {
@@ -540,7 +554,9 @@ export class WebGL2Backend {
       uMusicBass: { value: 0 },
       uMusicTreble: { value: 0 },
     };
-    Object.assign(this.posVar.material.uniforms, { uDt: shared.uDt, uActiveCount: shared.uActiveCount });
+    Object.assign(this.posVar.material.uniforms, {
+      uDt: shared.uDt, uActiveCount: shared.uActiveCount, uVelocityNext: { value: null },
+    });
     Object.assign(this.velVar.material.uniforms, shared);
 
     const error = this.gpu.init();
@@ -575,6 +591,7 @@ export class WebGL2Backend {
         uBrightness: { value: 1 },
         uGrowth: { value: 0 },
         uTime: { value: 0 },
+        uRenderCore: { value: new THREE.Vector3() }, uRenderRadius: { value: sim.bodyBase },
         uStructureTime: { value: 0 }, uFocusAngle: { value: 0 }, uAttention: { value: 0 },
         uThoughtPhase: { value: 0 }, uThoughtPulse: { value: 0 }, uContemplation: { value: 0 },
         uEnergy: { value: params.energyBase },
@@ -702,6 +719,9 @@ export class WebGL2Backend {
     m.uFormMix.value = state.formMix;
     m.uBreathWave.value = state.breathWave;
     m.uTime.value = state.time;
+    m.uStructureTime.value = state.structureTime;
+    (m.uRenderCore.value as THREE.Vector3).set(...state.corePosition);
+    m.uRenderRadius.value = this.sim.bodyBase * state.breathScale;
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
     m.uBrightness.value = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / BODY_BASE_RADIUS, 1.8));
@@ -709,6 +729,7 @@ export class WebGL2Backend {
     m.uGrowth.value = state.growth;
     m.uMoodShift.value = state.moodShift;
 
+    this.posVar.material.uniforms.uVelocityNext.value = this.gpu.getAlternateRenderTarget(this.velVar).texture;
     this.gpu.compute();
     m.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
     m.uVelTex.value = this.gpu.getCurrentRenderTarget(this.velVar).texture;

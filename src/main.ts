@@ -3,7 +3,7 @@ import App from './App.vue';
 import SettingsPanel from './ui/SettingsPanel.vue';
 import WelcomePanel from './ui/WelcomePanel.vue';
 
-// 运行期错误收集：供诊断条与自动化验证读取（上限 50 条，避免长期运行堆积）。
+// 运行期错误收集：供运行状态排查与自动化验证读取（上限 50 条，避免长期运行堆积）。
 const emerge = window as typeof window & { __emergeErrors?: string[] };
 emerge.__emergeErrors = [];
 const pushError = (msg: string) => {

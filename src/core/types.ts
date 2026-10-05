@@ -36,7 +36,7 @@ export interface LifeParams {
 }
 
 /** 粒子缓冲按上限分配，质量档位只改变活跃数量（避免重分配）。 */
-export const MAX_PARTICLES = 100_000;
+export const MAX_PARTICLES = 160_000;
 
 /** 团大小 100% 对应的基础世界半径；存档只保存百分比，不保存此标定值。 */
 export const BODY_BASE_RADIUS = 1.28;
@@ -52,7 +52,7 @@ export function bodyHitRadius(
 }
 
 export const DEFAULT_LIFE_PARAMS: LifeParams = {
-  particleCount: 32768,
+  particleCount: 65536,
   breathAmplitude: 0.08,
   breathRate: 0.2,
   driftSpeed: 0.22,

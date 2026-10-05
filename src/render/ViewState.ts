@@ -171,3 +171,15 @@ export function worldToCssOnViewPlane(
     worldPerPx,
   };
 }
+
+/** 两种视图共用拖动灵敏度与俯仰限制。 */
+export function dragCamera(cam: OrbitCamera, dx: number, dy: number): OrbitCamera {
+  return clampCamera({ ...cam, azimuth: cam.azimuth - dx * 0.0035, elevation: cam.elevation + dy * 0.0028 });
+}
+
+/** 环绕主体，同时保留默认视图中的屏幕摆位与深度。 */
+export function placedCamera(cam: OrbitCamera, core: Vec3): OrbitCamera {
+  const basis = viewMatrix({ ...cam, target: [0, 0, 0] });
+  const offset = (row: number) => basis[row] * core[0] + basis[row + 1] * core[1] + basis[row + 2] * core[2];
+  return { ...cam, target: [core[0] - offset(0), core[1] - offset(4), core[2] - offset(8)] };
+}

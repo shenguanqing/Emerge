@@ -9,7 +9,7 @@ export interface ColorTheme {
 }
 
 /**
- * 默认配色：扁平纯色，无立体高亮。
+ * 主题基础色；渲染层另按深度、路径信号与热点调制。
  * 三层是同一色相的亮核 / 主体 / 深晕；设置面板色点只显示主体色。
  */
 export const COLOR_THEMES: ColorTheme[] = [
@@ -17,8 +17,8 @@ export const COLOR_THEMES: ColorTheme[] = [
     id: 'gold',
     name: '金橙',
     core: [1.0, 0.9, 0.58],
-    body: [1.0, 0.48, 0.055],
-    aura: [0.66, 0.22, 0.025],
+    body: [1.0, 0.38, 0.045],
+    aura: [0.70, 0.27, 0.03],
   },
   {
     id: 'terracotta',
@@ -86,7 +86,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 /** 旧主题 id 迁移，避免用户存档丢配色。 */
 const THEME_ALIASES: Record<string, string> = {
-  jarvis: 'gold',
   ice: 'mist',
   aurora: 'sage',
   rose: 'terracotta',

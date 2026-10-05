@@ -8,7 +8,7 @@ Emerge 是生活在用户设备里的抽象数字生命。它没有固定物种�
 
 视觉参考星云、深海生命、磁流体、极光与微生物，最终形成原创语言。允许接近球形的有厚度粒子体，细节与局部活动呈现生命智慧的意识感；不可退化为均匀封闭硬球壳、屏保、Shader 展示或音乐频谱。
 
-形态母体是**围绕偏心亮核的悬浮粒子智体**：幼体已有密小芽核，成长后内部弯曲组织束与颗粒体积展开为饱满内层，外侧形成断续轨道、纵向脉络、神经链、孔隙膜与回流。整体接近饱满球状，保留暗缝、外围节点与断口。四阶段只改变结构复杂度与状态，不换成四套外形。完整规格与四阶段视觉 Prompt 基线见 [VISUAL_INTERACTION.md](VISUAL_INTERACTION.md)。
+形态母体是**由中央亮核、传输通道与三维球面电路组成的悬浮粒子智体**。完整体以用户指定的参考截图和原制作团队多视角镜头为方向：琥珀电路球壳、错层断续数据弧、矩形外伸支路与小型亮核环腔；前三阶段从芽核逐渐组织支路和球壳，保持同一生命身份。细节与验证边界见 [VISUAL_INTERACTION](VISUAL_INTERACTION.md) 与 [ROADMAP](ROADMAP.md)。
 
 ## 平台与体验
 
@@ -44,7 +44,7 @@ Emerge 是生活在用户设备里的抽象数字生命。它没有固定物种�
 
 - 行为扩展：Explore、Excited、Sleep、Playful、Lonely 等。
 - DNA：创建时生成并永久保存 movementStyle、symmetry、particleDensity、coreCount、tailProbability、noiseFrequency、noiseStrength、curiosityBase、fearBase、energyBase、growthBias、orbitBias、flowBias。
-- 成长：由 DNA 与长期互动塑造四形态结构复杂度，不绑定固定物种等级。四形态为 Origin「形成」→ Awaken「组织」→ Conscious「思考」→ Emerge「涌现」，共用偏心组织核与有孔隙的粒子体；差异体现在轨道密度、内旋涡、神经网络层、分区弧片与孔隙膜、层间微纤维、碎片和弧形回流，而不是双核或触手等具象附件。
+- 成长：由 DNA 与长期互动塑造四形态结构复杂度，不绑定固定物种等级。四形态为 Origin「形成」→ Awaken「组织」→ Conscious「思考」→ Emerge「涌现」，共用中央组织核与有孔隙的粒子球体；差异体现在径向束、球层覆盖、数据弧与电路的组织容量、传输束、局部网络、能量传播与尾迹，而不是双核或触手等具象附件。
 - 本地记忆：陪伴时长、互动方式与次数、活跃时段、夜间使用、音乐互动、离开和连续陪伴天数；不使用 AI API。映射示例：频繁快速晃动鼠标推高 fear，缓慢平稳互动推高 trust，长期夜间使用发展出更明显的夜间发光特征，长时间离开降低 trust 并加深初始回避。
 - 时间与离线：现实昼夜影响活动、亮度和睡眠；关闭应用不会死亡；通过 lastActiveTime 在回归时呈现唤醒与凝聚。
 - 音乐：Bass / Mid / Treble / Energy / Beat 影响行为、核心和外层粒子，不呈现频谱条。

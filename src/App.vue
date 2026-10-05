@@ -15,18 +15,20 @@ import { QUALITY_TIERS, qualityAppearance, QualityManager, type QualityTier } fr
 import { applyDNA, generateDNA, type LifeDNA } from './core/DNAEngine';
 import { MemoryEngine, createMemoryState } from './core/MemoryEngine';
 import { GrowthEngine } from './core/GrowthEngine';
-import { clearLife, defaultStorage, loadLife, saveLife, SCHEMA_VERSION, MemoryStorage, STORAGE_KEY } from './core/LifeStorage';
+import { clearLife, defaultStorage, loadLife, saveLife, SCHEMA_VERSION } from './core/LifeStorage';
 import { LifeClock } from './core/LifeClock';
-import DebugPanel from './ui/DebugPanel.vue';
 import MusicControl from './ui/MusicControl.vue';
 import Observatory from './ui/Observatory.vue';
 import SettingsPanel from './ui/SettingsPanel.vue';
 import WelcomePanel from './ui/WelcomePanel.vue';
 import type { MusicFeatures } from './input/AudioSystem';
 import Diagnostics from './ui/Diagnostics.vue';
-import { DEFAULT_CAMERA, worldToCssOnViewPlane, type OrbitCamera } from './render/ViewState';
+import TimeControls, { type TimeControlCommand } from './ui/TimeControls.vue';
+import { DEFAULT_CAMERA, dragCamera, placedCamera, worldToCssOnViewPlane, type OrbitCamera } from './render/ViewState';
 import { setLocaleMode, stageDisplayName, t, locale, type LocaleMode } from './i18n';
 import { emitLocal, invoke, listenLocal, listenNative } from './platform/desktop';
+import { acquireLifeTabLock, type LifeTabLock } from './platform/lifeTabLock';
+import { createLifeSession, freshPreviewUrl } from './platform/lifeSession';
 import {
   loadSettings,
   desktopPosition,
@@ -54,14 +56,31 @@ const diag = reactive({
   life: '',
 });
 
-const quality = new QualityManager(isDesktop ? 30 : 60);
-const debugMode = ref(false);
+const quality = new QualityManager(isDesktop ? 30 : 60, initialQualityTier());
+const debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
+const previewMode = ref(false);
+let lifeSession: ReturnType<typeof createLifeSession> | null = null;
+const clockState = reactive({ vnow: '—', scale: 1 });
+diag.quality = quality.tier;
+
+/** 起步画质：手机窄屏从 medium 起步，避免高端粒子预算开局卡顿；桌面不变。 */
+function initialQualityTier(): QualityTier {
+  if (isDesktop) return 'high';
+  const area = (window.innerWidth || 0) * (window.innerHeight || 0);
+  const cores = navigator.hardwareConcurrency ?? 4;
+  return area <= 480 * 960 || cores <= 4 ? 'medium' : 'high';
+}
 
 /** Web 端内嵌面板：首次引导与设置覆盖层；右上角音乐/运行状态弹层（桌面端为独立窗口 + 托盘入口）。 */
 const welcomeOpen = ref(false);
 const settingsOpen = ref(false);
 const musicOpen = ref(false);
 const statsOpen = ref(false);
+/** 多标签页互斥：非持锁标签页暂停模拟与写档（桌面端单窗口，恒为 true）。 */
+const isLifeLeader = ref(true);
+let tabLock: LifeTabLock | null = null;
+/** GPU 上下文丢失（移动端内存回收）：显示恢复入口而非黑屏。 */
+const gpuLost = ref(false);
 function toggleMusic(): void {
   musicOpen.value = !musicOpen.value;
   if (musicOpen.value) statsOpen.value = false;
@@ -95,6 +114,7 @@ watch([musicOpen, statsOpen], ([music, stats]) => {
 
 /** 观察空间：双击进入，拖动旋转 / 滚轮缩放。 */
 const observatoryOpen = ref(false);
+let desktopCamera: OrbitCamera = { ...DEFAULT_CAMERA };
 const observatoryInsets = ref({ top: isDesktop ? 48 : 0, right: 0, bottom: 0, left: 0 });
 const observatoryCamera = ref<OrbitCamera>({ ...DEFAULT_CAMERA, distance: 5.4 });
 const observatory = reactive({
@@ -140,7 +160,7 @@ async function openObservatory(): Promise<void> {
 function closeObservatory(): void {
   observatoryOpen.value = false;
   pointer?.clearGestures();
-  applyOrbitView({ ...DEFAULT_CAMERA });
+  applyOrbitView(desktopCamera);
   if (isDesktop) {
     void invoke('set_observatory_open', { open: false }).catch((error) => { diag.note = String(error); });
   }
@@ -153,7 +173,7 @@ function doubleClickOnEntity(cssX: number, cssY: number): boolean {
   const state = engine.getState();
   const core = state.corePosition;
   const { x, y, worldPerPx } = worldToCssOnViewPlane(
-    DEFAULT_CAMERA,
+    desktopCamera,
     [core[0], core[1], core[2]],
     canvas.clientWidth,
     canvas.clientHeight,
@@ -212,15 +232,24 @@ function broadcastClock(): void {
     scale: clock.scale,
     growth: engine?.getGrowthSummary(),
   };
+  Object.assign(clockState, { vnow: payload.vnow, scale: payload.scale });
   emitLocal('clock-state', payload);
+  // 调试副本的时间/成长快照只在本页流转，不能覆盖其它标签页的真实读数。
+  if (lifeSession?.preview) return;
   if (!isDesktop) {
-    try { localStorage.setItem(CLOCK_STATE_STORAGE_KEY, JSON.stringify(payload)); } catch { /* ignore */ }
+    // 跨标签页快照节流 5s：直链设置页的成长读数不需要秒级精度，减少移动端存储唤醒。
+    const now = Date.now();
+    if (now - lastClockWrite >= 5000) {
+      lastClockWrite = now;
+      try { localStorage.setItem(CLOCK_STATE_STORAGE_KEY, JSON.stringify(payload)); } catch { /* ignore */ }
+    }
     return;
   }
   void (window as typeof window & {
     __TAURI__?: { event?: { emit: (e: string, p: unknown) => Promise<void> } };
   }).__TAURI__?.event?.emit('clock-state', payload);
 }
+let lastClockWrite = 0;
 let resizeObserver: ResizeObserver | null = null;
 /** 当前视觉设置（团大小 / 颜色 / 亮度 / 点大小倍率）。 */
 let visual: VisualSettings = {
@@ -241,7 +270,6 @@ function applyVisual(): void {
 }
 
 /** 设置/引导面板事件（桌面原生转发与 Web 本地事件共用同一处理）。 */
-type TimeControlCommand = { type: 'scale' | 'advance' | 'interaction' | 'absence' | 'reset'; value: number };
 
 function applyVisualPayload(v: VisualSettings): void {
   visual = {
@@ -276,9 +304,13 @@ function applyTimeControl(cmd: TimeControlCommand): void {
     url.searchParams.set('offline', String(cmd.value * 1440));
     window.location.href = url.toString();
   } else if (cmd.type === 'reset') {
-    sessionStorage.setItem('emerge.reset', '1');
-    localStorage.removeItem('emerge.life.v1');
-    window.location.reload();
+    if (lifeSession?.preview) {
+      window.location.href = freshPreviewUrl(window.location.href);
+    } else {
+      sessionStorage.setItem('emerge.reset', '1');
+      localStorage.removeItem('emerge.life.v1');
+      window.location.reload();
+    }
   }
   broadcastClock();
 }
@@ -324,6 +356,10 @@ function replayWelcomeFromSettings(): void {
   closeSettings();
   welcomeOpen.value = true;
   focusLifeForPanel(true);
+}
+/** GPU 上下文丢失后的恢复入口：整页重载重建后端。 */
+function reloadPage(): void {
+  location.reload();
 }
 let rafId = 0;
 let lastTime = 0;
@@ -433,7 +469,7 @@ onMounted(async () => {
 
   // 设置面板持久化：团大小 / 颜色 / 亮度 / 点大小 / 行为开关。
   const saved = loadSettings();
-  // URL 参数：?timelapse=N 时间倍率、?debug=1 调试面板、?offline=N 模拟离开、
+  // URL 参数：?debug=1 调试副本、?timelapse=N 时间倍率、?offline=N 模拟离开、
   // ?age=N 里程碑年龄、?growth=N 直接设定成长度下限、?bodyScale=N 截图覆盖团大小并居中。
   const urlParams = new URLSearchParams(window.location.search);
   if (isDesktop) {
@@ -466,15 +502,32 @@ onMounted(async () => {
   // ---- 生命存档：DNA 永久保存，记忆与年龄跨会话累积 ----
   // 视觉/时间预览使用存档副本，避免测试形态写回真实成长记录。
   const persistedStorage = defaultStorage();
-  const preview = ['growth', 'age', 'offline', 'timelapse'].some((key) => urlParams.has(key));
-  const storage = preview ? new MemoryStorage() : persistedStorage;
-  if (preview) {
-    const savedLife = persistedStorage.getItem(STORAGE_KEY);
-    if (savedLife) storage.setItem(STORAGE_KEY, savedLife);
+  lifeSession = createLifeSession(window.location.search, persistedStorage);
+  const { preview, storage } = lifeSession;
+  previewMode.value = preview;
+  // 多标签页互斥：只有持锁标签页运行生命体并写档，避免存档互相覆盖（预览模式不参与）。
+  if (!isDesktop && !preview) {
+    tabLock = acquireLifeTabLock({
+      onLost: () => { isLifeLeader.value = false; },
+      onAcquired: () => { isLifeLeader.value = true; },
+    });
+    isLifeLeader.value = tabLock.isLeader;
+    // 真实导航/关闭不触发 Vue 卸载钩子：pagehide 同步释放锁，
+    // 让同页刷新立即重新持锁（避免出现数秒「另一标签页」误提示）；
+    // bfcache 恢复（pageshow.persisted）时重新竞锁。
+    window.addEventListener('pagehide', () => tabLock?.stop());
+    window.addEventListener('pageshow', (e) => {
+      if ((e as PageTransitionEvent).persisted) {
+        tabLock = acquireLifeTabLock({
+          onLost: () => { isLifeLeader.value = false; },
+          onAcquired: () => { isLifeLeader.value = true; },
+        });
+        isLifeLeader.value = tabLock.isLeader;
+      }
+    });
   }
   const nowDate = new Date();
   const timelapse = Math.max(Number(urlParams.get('timelapse') ?? '1') || 1, 1);
-  debugMode.value = urlParams.get('debug') === '1';
   const growthParam = Number(urlParams.get('growth') ?? '0');
   const clock = new LifeClock(timelapse);
   let dna: LifeDNA;
@@ -613,7 +666,13 @@ onMounted(async () => {
   clockTimer = window.setInterval(broadcastClock, 1000);
   broadcastClock();
   (window as typeof window & { __emergeMemory?: MemoryEngine }).__emergeMemory = memory;
-  pointer = new PointerSystem();
+  pointer = new PointerSystem({
+    hit: (x, y) => !observatoryOpen.value && doubleClickOnEntity(x, y),
+    move: (dx, dy) => {
+      desktopCamera = placedCamera(dragCamera(desktopCamera, dx, dy), engine!.getState().corePosition);
+      applyOrbitView(desktopCamera);
+    },
+  });
   if (isDesktop) {
     unlistenVisibility = await listenNative<boolean>('life-visibility', (visible) => { desktopVisible = visible; });
     unlistenOpenObs = await listenNative<unknown>('open-observatory', () => {
@@ -682,8 +741,8 @@ onMounted(async () => {
     return;
   }
 
-  // 后端就绪后恢复位置锁定。
-  placement = { x: saved.positionX, y: saved.positionY };
+  // 后端就绪后恢复位置锁定；?bodyScale 预览保持覆盖位置（居中或 posX/posY），不回读存档。
+  if (bodyOverride <= 0) { placement = { x: saved.positionX, y: saved.positionY }; }
   applyPlacement();
 
   if (!active) {
@@ -703,6 +762,9 @@ onMounted(async () => {
   backend = active;
   applyVisual();
   applyTier(quality.tier);
+  // GPU 上下文丢失（移动端内存回收）：全屏恢复入口，避免黑屏死画布。
+  canvas.addEventListener('webglcontextlost', () => { gpuLost.value = true; });
+  if (active instanceof WebGPUBackend) active.onDeviceLost = () => { gpuLost.value = true; };
   (window as typeof window & { __emergeBackend?: Backend }).__emergeBackend = backend;
   diag.backend = backend.id === 'webgpu' ? 'WebGPU Compute' : 'WebGL2 GPGPU';
   if (!diag.note) {
@@ -730,7 +792,7 @@ onMounted(async () => {
     rafId = requestAnimationFrame(loop);
     const dt = (now - lastTime) / 1000;
     lastTime = now;
-    if (document.hidden || !desktopVisible || dt > 0.25) {
+    if (document.hidden || !desktopVisible || !isLifeLeader.value || dt > 0.25) {
       lifeEngine.setVisible(false);
       pacer.reset(); fpsWindow = 0; fpsFrames = 0;
       return;
@@ -765,9 +827,14 @@ onMounted(async () => {
         pct: Math.round(st.growth * 100),
       });
       const trayText = `${daysSeen}${t('unit.days')} · ${stageDisplayName(st.stage)} ${t('unit.growth')} ${Math.round(st.growth * 100)}%`;
-      if (isDesktop && trayText !== lastTrayLife) {
+      if (trayText !== lastTrayLife) {
         lastTrayLife = trayText;
-        void invoke('update_life_info', { days: daysSeen, stage: st.stage, pct: Math.round(st.growth * 100) }).catch(() => { lastTrayLife = ''; });
+        if (isDesktop) {
+          void invoke('update_life_info', { days: daysSeen, stage: st.stage, pct: Math.round(st.growth * 100) }).catch(() => { lastTrayLife = ''; });
+        } else {
+          // 网页标签页标题同步生命状态，多标签页时一眼可辨。
+          document.title = `Emerge · ${trayText}`;
+        }
       }
     }
 
@@ -777,7 +844,8 @@ onMounted(async () => {
     fpsFrames += 1;
 
     inputPointer.tick(simDt);
-    lifeEngine.setPointer(inputPointer.getReading());
+    const reading = inputPointer.getReading();
+    lifeEngine.setPointer(inputPointer.isDragging() ? { ...reading, active: false } : reading);
     // 观察空间里拖动只转相机，不再驱动按压吸引与涟漪。
     lifeEngine.setPress(inputPointer.isPressing() && !observatoryOpen.value);
     // 双击进观察空间；单击涟漪延迟 300ms，不与双击叠加。
@@ -805,6 +873,11 @@ onMounted(async () => {
         observatory.growth = lifeEngine.getGrowthSummary();
       }
     }
+    if (!observatoryOpen.value) {
+      desktopCamera = placedCamera(desktopCamera, lifeEngine.getState().corePosition);
+      activeBackend.setView(desktopCamera);
+      inputPointer.setCamera(desktopCamera);
+    }
     activeBackend.frame(lifeEngine.getState(), simDt);
   };
   rafId = requestAnimationFrame(loop);
@@ -812,7 +885,7 @@ onMounted(async () => {
   if (isDesktop && !preview) {
     void invoke('show_onboarding_if_needed', { existingLife: loaded.ok })
       .catch((error) => { diag.note = String(error); });
-  } else if (!isDesktop && !preview && !debugMode.value) {
+  } else if (!isDesktop && !preview) {
     // Web 首次引导：标记语义与桌面 onboarding.json 一致（升级用户不重走）。
     if (shouldShowOnboarding(persistedStorage, loaded.ok)) {
       welcomeOpen.value = true;
@@ -820,8 +893,9 @@ onMounted(async () => {
     }
   }
 
-  // 自动存档：30 秒一次 + 页面隐藏/关闭时。
+  // 自动存档：30 秒一次 + 页面隐藏/关闭时；非持锁标签页不写档。
   const save = () => {
+    if (!isLifeLeader.value) return;
     saveLife(storage, {
       schemaVersion: SCHEMA_VERSION,
       dna,
@@ -862,6 +936,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onPopoverDismiss, true);
   window.removeEventListener('keydown', onPopoverKeydown, true);
   pointer?.dispose();
+  tabLock?.stop();
+  tabLock = null;
   backend?.dispose();
   engine = null;
   backend = null;
@@ -872,17 +948,6 @@ onBeforeUnmount(() => {
 <template>
   <main class="stage">
     <canvas :key="canvasEpoch" ref="canvasRef" class="stage-canvas" @dblclick="onCanvasDoubleClick"></canvas>
-    <Diagnostics v-if="debugMode"
-      :backend="diag.backend"
-      :note="diag.note"
-      :fps="diag.fps"
-      :particles="diag.particles"
-      :dpr="diag.dpr"
-      :mood="diag.mood"
-      :quality="diag.quality"
-      :target-fps="diag.targetFps"
-      :life="diag.life"
-    />
     <MusicControl
       :controls-visible="observatoryOpen || musicOpen"
       :target="musicOpen ? '#web-music-panel' : '#observatory-music'"
@@ -903,7 +968,7 @@ onBeforeUnmount(() => {
           <circle cx="16.5" cy="16" r="2.5" />
         </svg>
       </button>
-      <button v-if="!debugMode" type="button" class="top-btn" :aria-label="t('diag.title')" :title="t('diag.title')" :aria-expanded="statsOpen" @click="toggleStats">
+      <button type="button" class="top-btn" :aria-label="t('diag.title')" :title="t('diag.title')" :aria-expanded="statsOpen" @click="toggleStats">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />
         </svg>
@@ -917,7 +982,6 @@ onBeforeUnmount(() => {
     <Transition name="pop">
       <div v-show="statsOpen" class="panel-popover stats-popover">
         <Diagnostics
-          layout="panel"
           :backend="diag.backend"
           :note="diag.note"
           :fps="diag.fps"
@@ -928,6 +992,8 @@ onBeforeUnmount(() => {
           :target-fps="diag.targetFps"
           :life="diag.life"
         />
+        <TimeControls v-if="debugMode" variant="popover" :vnow="clockState.vnow" :scale="clockState.scale"
+          preview @command="applyTimeControl" />
       </div>
     </Transition>
     <Transition name="panel-slide-left">
@@ -937,10 +1003,14 @@ onBeforeUnmount(() => {
     </Transition>
     <Transition name="panel-slide-right">
       <div v-if="settingsOpen" class="panel-overlay from-right">
-        <SettingsPanel embedded @close="closeSettings" @replay-welcome="replayWelcomeFromSettings" />
+        <SettingsPanel embedded :preview="previewMode" @close="closeSettings" @replay-welcome="replayWelcomeFromSettings" />
       </div>
     </Transition>
-    <DebugPanel v-if="debugMode" />
+    <div v-if="!isDesktop && !isLifeLeader" class="tab-note" role="status">{{ t('note.tabFollower') }}</div>
+    <div v-if="gpuLost" class="gpu-lost" role="alert">
+      <p>{{ t('note.gpuLost') }}</p>
+      <button type="button" @click="reloadPage">{{ t('note.reload') }}</button>
+    </div>
     <Observatory
       v-if="observatoryOpen"
       :state="observatory.state"
@@ -951,7 +1021,6 @@ onBeforeUnmount(() => {
       @close="closeObservatory"
       @view="applyOrbitView"
     />
-    <div v-if="debugMode && !diag.life" class="unlock-hint"></div>
   </main>
 </template>
 
@@ -987,20 +1056,18 @@ html.desktop-transparent body,
 html.desktop-transparent #app {
   background: transparent;
 }
-/* 画面左下角热区已移除：隐藏入口改为设置面板标题连点。 */
-.unlock-hint {
-  display: none;
-}
 .stage-canvas {
   display: block;
   width: 100%;
   height: 100%;
+  /* 触屏手势归画布：禁用浏览器双击缩放与长按选择，双击/长按语义不受干扰 */
+  touch-action: none;
 }
-/* Web 右上角入口：设置 / 音乐 / 运行状态，纵向按钮组 + 左侧玻璃弹层 */
+/* Web 右上角入口：设置 / 音乐 / 运行状态，纵向按钮组 + 左侧玻璃弹层（安全区避让） */
 .top-actions-stack {
   position: fixed;
-  top: 14px;
-  right: 14px;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -1051,22 +1118,78 @@ html.desktop-transparent #app {
 }
 .panel-popover {
   position: fixed;
-  top: 14px;
-  right: 58px;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(58px + env(safe-area-inset-right, 0px));
   z-index: 10;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 12px;
   background: rgba(20, 20, 19, 0.72);
   backdrop-filter: blur(10px);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
+/* 窄屏（手机）时收窄弹层：右缘让开按钮列，左侧保留看粒子的空间 */
 .music-popover {
-  width: 264px;
+  width: min(264px, calc(100vw - 70px));
   padding: 12px 14px;
 }
 .stats-popover {
-  width: 320px;
-  padding: 6px 14px;
+  width: min(320px, calc(100vw - 70px));
+  padding: 10px 12px;
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+}
+/* 等待者提示：生命体由另一标签页陪伴时，本页底部居中一块低调玻璃条 */
+.tab-note {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 20, 19, 0.78);
+  color: rgba(242, 240, 234, 0.75);
+  font: 12px/18px var(--font-ui, system-ui, sans-serif);
+  text-align: center;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+/* GPU 上下文丢失：全屏恢复层 */
+.gpu-lost {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.9);
+  color: rgba(242, 240, 234, 0.85);
+  font: 14px/22px var(--font-ui, system-ui, sans-serif);
+  text-align: center;
+}
+.gpu-lost p {
+  margin: 0;
+  max-width: 320px;
+}
+.gpu-lost button {
+  min-width: 120px;
+  min-height: 38px;
+  padding: 0 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f0ea;
+  font: 600 13px/18px var(--font-ui, system-ui, sans-serif);
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+.gpu-lost button:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 /* 内嵌面板：右侧分栏（设置在右 / 引导在左），生命体在另一侧可见；独立滚动，纸底与面板自身一致 */
 .panel-overlay {

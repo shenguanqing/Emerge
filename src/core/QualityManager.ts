@@ -48,8 +48,10 @@ export class QualityManager {
   /** 低功耗目标帧率：默认 60→30→15，桌面上限为 30。 */
   targetFps = 60;
 
-  constructor(readonly maxFps = 60) {
+  constructor(readonly maxFps = 60, initialTier?: QualityTier) {
     this.targetFps = maxFps;
+    // 允许按设备起步降档（如手机 medium 起步），之后仍由 FPS 采样自动升降。
+    if (initialTier) { this.tier = initialTier; }
   }
 
   /** 降档阈值：活跃时平均 FPS 低于该值持续 slowSeconds 降一档。 */

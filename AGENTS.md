@@ -32,6 +32,7 @@ Emerge（Particle Life / 粒子生命体）是由 GPU 粒子本身构成的抽�
 
 - 实现时运行与改动相称的检查；为行为、确定性随机、时间推进和持久化迁移等关键逻辑编写有意义的测试。
 - 视觉变化需实际运行并观察；GPU 与桌面能力需记录系统、硬件、后端、粒子数与结果。无法验证的项目明确标记未验证，汇总在 ROADMAP「已知坑」。
+- 本地验收截图、日志、性能采样与临时文件统一放 `output/`（Git 忽略）；可复用的开发/打包/检查脚本放 `scripts/`，避免另建重复的产物目录。清理前核对引用，保留必要的原始证据与用户代码差异。
 - 按 [docs/VALIDATION.md](docs/VALIDATION.md) 验收，不以编译通过替代生命感验收，不虚报性能数据。
 - 保留用户已有改动，不做未经要求的发布、依赖升级或范围扩张。
 - 用户可见变更按日期记入 CHANGELOG 的 Unreleased（Added / Changed / Fixed）；重要决策的结论并入对应规格文档（ARCHITECTURE / VISUAL_INTERACTION / DESIGN_SYSTEM / PRODUCT）并记入 CHANGELOG；文档使用中文，代码标识符使用英文。

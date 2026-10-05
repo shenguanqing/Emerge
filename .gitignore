@@ -20,17 +20,9 @@ dist/
 src-tauri/target/
 app-icon.png
 
-# 浏览器自动化产物
-output/
+# 本地验收产物：截图、日志、性能采样和临时检查文件
+/output/
 .playwright-cli/
-
-# 验收证据图（本地保存，不入库；报告正文只留结论）
-docs/reports/**/view-*
-docs/reports/**/crop-*
-docs/reports/**/big-*
-docs/reports/**/*.jpg
-docs/reports/mature-form-retest/
-docs/reports/phase-8-retest/
 
 # 本地验收脚本缓存
 __pycache__/

@@ -35,7 +35,7 @@ type ThemeMode = 'auto' | 'light' | 'dark';
 function readStoredTheme(): ThemeMode {
   try {
     const v = localStorage.getItem('emerge.ui.theme');
-    if (v === 'light' || v === 'dark') return v;
+    if (v === 'light' || v === 'dark' || v === 'auto') return v;
   } catch { /* ignore */ }
   return isDesktop ? 'auto' : 'dark';
 }
@@ -434,6 +434,7 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
             <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.slow') }}</strong><p>{{ t('welcome.slowDesc') }}</p></div></li>
             <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.tap') }}</strong><p>{{ t('welcome.tapDesc') }}</p></div></li>
             <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.observe') }}</strong><p>{{ t('welcome.observeDesc') }}</p></div></li>
+            <li><span class="lesson-dot" aria-hidden="true" /><div class="lesson-copy"><strong>{{ t('welcome.rotate') }}</strong><p>{{ t('welcome.rotateDesc') }}</p></div></li>
           </ul>
           <p class="note">{{ t(isDesktop ? 'welcome.trayHint' : 'welcome.webHint') }}</p>
         </template>
@@ -611,7 +612,7 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
   flex-direction: column;
   align-items: center;
   z-index: 1;
-  padding: 12px 24px 10px;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 24px 10px;
   /* 上层：底部线性渐隐到页面底色（保证下边缘完全融入）；下层：球体周围的主体色光晕。 */
   background-color: var(--bg-page);
   background-image:
@@ -677,7 +678,7 @@ const accentStyle = usePaletteAccent(settings, () => themeMode);
 }
 .skip {
   position: absolute;
-  top: 12px;
+  top: max(12px, env(safe-area-inset-top, 0px));
   right: 14px;
   border: none;
   background: transparent;

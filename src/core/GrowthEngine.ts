@@ -10,7 +10,7 @@ export type FormStage = 'origin' | 'awaken' | 'conscious' | 'emerge';
 
 /** 渲染拓扑上限：两个 GPU 后端使用相同的轨道与节点编号。 */
 export const FORM_ORBIT_LANES = 30;
-export const FORM_NODE_COUNT = 24;
+export const FORM_NODE_COUNT = 120;
 
 export interface GrowthInputs {
   /** 陪伴天数。 */
@@ -35,7 +35,7 @@ export interface FormStructure {
   coreGlow: number;
   /** 轨道密度 0..1（映射到轨道条数，永远不完整）。 */
   orbitDensity: number;
-  /** 轨道条数 3..30（Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30）。 */
+  /** 同一主环的环丝容量 3..30（Origin≈4 / Awaken≈10 / Conscious≈18 / Emerge≈30）。 */
   orbitCount: number;
   /** 轨道不完整程度（始终偏高，禁止封口成圆）。 */
   orbitBroken: number;

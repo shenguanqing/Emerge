@@ -1,7 +1,7 @@
 /**
  * 粒子初始数据（CPU 生成一次，上传 GPU）。
  * 布局 RGBA：position.xyz + seed；velocity.xyz + layer。
- * 层级由 seed 确定性导出（seed<0.12 核心 / <0.86 身体 / 其余外围），
+ * 层级由 seed 确定性导出（seed<0.07 核心 / <0.96 身体与端口 / 其余外缘数据流），
  * 与两侧 shader 的推导保持一致，避免额外存储。
  */
 export interface ParticleInitData {
@@ -21,10 +21,11 @@ export function createParticleInitData(count: number): ParticleInitData {
     positions[i * 4] = Math.cos(theta) * s * r;
     positions[i * 4 + 1] = Math.sin(theta) * s * r;
     positions[i * 4 + 2] = u * r;
-    const seed = Math.random();
+    // 分类也使用实际上传的 f32 种子，避免边界舍入后 CPU/GPU 层级不一致。
+    const seed = Math.fround(Math.random());
     positions[i * 4 + 3] = seed;
 
-    const layer = seed < 0.12 ? 0 : seed < 0.86 ? 1 : 2;
+    const layer = seed < 0.07 ? 0 : seed < 0.96 ? 1 : 2;
     velocities[i * 4] = 0;
     velocities[i * 4 + 1] = 0;
     velocities[i * 4 + 2] = 0;

@@ -12,6 +12,7 @@ import {
   MAX_DIST,
   MIN_DIST,
   type OrbitCamera,
+  dragCamera,
 } from '../render/ViewState';
 
 const props = defineProps<{
@@ -49,6 +50,12 @@ const dragging = ref(false);
 let lastX = 0;
 let lastY = 0;
 
+/** 手机窄屏默认收起侧栏，把画面留给可拖拽的生命体；桌面不显示手柄。 */
+const railToggleable = window.matchMedia('(max-width: 640px)').matches;
+const railCollapsed = ref(railToggleable);
+/** 提示文案按平台分支：手机没有滚轮/方向键。 */
+const isNarrow = railToggleable;
+
 const stageLabel = computed(() => {
   const s = props.state?.stage;
   if (!s) return '—';
@@ -84,7 +91,20 @@ function onWheel(e: WheelEvent): void {
   pushView();
 }
 
+/** 双指捏合缩放：活动指针表 + 指距变化映射相机距离（与滚轮同一钳制）。 */
+const activePointers = new Map<number, { x: number; y: number }>();
+let pinchDist = 0;
+
 function onDown(e: PointerEvent): void {
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size >= 2) {
+    // 进入捏合：记录指距并暂停单指旋转。
+    const [a, b] = [...activePointers.values()];
+    pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    dragging.value = false;
+    dismissTip();
+    return;
+  }
   dragging.value = true;
   lastX = e.clientX;
   lastY = e.clientY;
@@ -96,6 +116,17 @@ function onDown(e: PointerEvent): void {
 }
 
 function onMove(e: PointerEvent): void {
+  if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size >= 2) {
+    const [a, b] = [...activePointers.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchDist > 0 && dist > 0) {
+      view.value = clampCamera({ ...view.value, distance: view.value.distance * (pinchDist / dist) });
+      pushView();
+    }
+    pinchDist = dist;
+    return;
+  }
   if (!dragging.value) return;
   dismissTip();
   const dx = e.clientX - lastX;
@@ -103,15 +134,22 @@ function onMove(e: PointerEvent): void {
   lastX = e.clientX;
   lastY = e.clientY;
   // 降低灵敏度：桌面触控板/高分屏拖动不易甩飞。
-  view.value = clampCamera({
-    ...view.value,
-    azimuth: view.value.azimuth - dx * 0.0035,
-    elevation: view.value.elevation + dy * 0.0028,
-  });
+  view.value = dragCamera(view.value, dx, dy);
   pushView();
 }
 
-function onUp(): void {
+function onUp(e?: PointerEvent): void {
+  if (e) activePointers.delete(e.pointerId); else activePointers.clear();
+  if (activePointers.size >= 2) return;
+  pinchDist = 0;
+  if (activePointers.size === 1) {
+    // 捏合回到单指：以剩余指针位置重启旋转，视角不跳变。
+    const [p] = [...activePointers.values()];
+    lastX = p.x;
+    lastY = p.y;
+    dragging.value = true;
+    return;
+  }
   dragging.value = false;
 }
 
@@ -176,13 +214,20 @@ defineExpose({
       class="obs-veil"
       @pointerdown="onDown"
       @pointermove="onMove"
-      @pointerup="onUp"
-      @pointercancel="onUp"
+      @pointerup="onUp($event)"
+      @pointercancel="onUp($event)"
       @dblclick.stop="emit('close')"
       @wheel="onWheel"
     />
 
-    <aside class="obs-rail">
+    <aside class="obs-rail" :class="{ 'is-collapsed': railCollapsed }">
+      <button
+        v-if="railToggleable"
+        class="obs-rail-handle"
+        type="button"
+        :aria-label="t('obs.rail.collapse')"
+        @click="railCollapsed = true"
+      >›</button>
       <header class="obs-head">
         <div>
           <p class="obs-kicker">{{ t('obs.kicker') }}</p>
@@ -250,9 +295,20 @@ defineExpose({
 
       <footer class="obs-foot">
         <button class="obs-reset" type="button" @click="resetView">{{ t('obs.reset') }}</button>
-        <p class="obs-hint">{{ t('obs.hint') }}</p>
+        <p class="obs-hint">{{ t(isNarrow ? 'obs.hintMobile' : 'obs.hint') }}</p>
       </footer>
     </aside>
+
+    <!-- 手机收纳态：右上角单按钮展开侧栏（与主页面顶部按钮同款语言） -->
+    <Transition name="obs-tip">
+      <button
+        v-if="railToggleable && railCollapsed"
+        class="obs-rail-fab"
+        type="button"
+        :aria-label="t('obs.rail.expand')"
+        @click="railCollapsed = false"
+      >‹</button>
+    </Transition>
 
     <Transition name="obs-tip">
       <div v-if="firstTip" class="obs-tip">
@@ -287,6 +343,8 @@ defineExpose({
   inset: 0;
   pointer-events: auto;
   cursor: grab;
+  /* 手势归观察空间：双指捏合缩放不走浏览器页面缩放 */
+  touch-action: none;
   /* 不加压暗遮罩：保持粒子原有亮度，只作拖拽热区。 */
   background: transparent;
 }
@@ -313,6 +371,75 @@ defineExpose({
   max-height: calc(100dvh - 40px - var(--obs-top) - var(--obs-bottom));
   overflow: auto;
   box-sizing: border-box;
+}
+
+/* 手机收纳手柄：贴在侧栏左缘，收起后仍留在屏幕内 */
+.obs-rail-handle {
+  position: absolute;
+  left: -13px;
+  top: 14px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  display: none;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  background: rgba(14, 14, 16, 0.85);
+  color: rgba(242, 240, 234, 0.75);
+  font: 14px/1 var(--font-ui, system-ui, sans-serif);
+  cursor: pointer;
+}
+.obs-rail-handle:hover {
+  color: #eba085;
+  border-color: rgba(224, 138, 107, 0.6);
+}
+
+@media (max-width: 640px) {
+  .obs-rail {
+    transition: transform 0.28s cubic-bezier(0.2, 0, 0, 1), opacity 0.24s ease;
+  }
+  .obs-rail-handle {
+    display: grid;
+  }
+  /* 收起态：侧栏整体滑出屏幕，右上角只留一枚圆形展开按钮 */
+  .obs-rail.is-collapsed {
+    transform: translateX(115%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* 展开按钮：与主页面顶部第一个按钮（设置）同一位置 */
+  .obs-rail-fab {
+    position: absolute;
+    top: calc(14px + env(safe-area-inset-top, 0px));
+    right: calc(14px + env(safe-area-inset-right, 0px));
+    z-index: 1;
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 50%;
+    background: rgba(14, 14, 16, 0.72);
+    color: rgba(242, 240, 234, 0.78);
+    font: 14px/1 var(--font-ui, system-ui, sans-serif);
+    cursor: pointer;
+    pointer-events: auto;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+  }
+  .obs-rail-fab:hover {
+    border-color: rgba(224, 138, 107, 0.6);
+    color: #eba085;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .obs-rail {
+      transition-duration: 0.01ms;
+    }
+  }
 }
 
 .obs-head {
@@ -503,7 +630,9 @@ defineExpose({
 .obs-tip-list li {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
   font-size: 13px;
   line-height: 20px;
 }
@@ -516,6 +645,7 @@ defineExpose({
 
 .obs-tip-list span {
   color: rgba(242, 240, 234, 0.55);
+  text-align: right;
 }
 
 .obs-tip-ok {

@@ -11,6 +11,14 @@ import {
  * （与渲染相机 fov 50° 一致；观察空间旋转后按当前视平面反投影）。
  */
 export class PointerSystem {
+  private drag: { x: number; y: number; active: boolean } | null = null;
+  constructor(private readonly orbit?: {
+    hit(x: number, y: number): boolean;
+    move(dx: number, dy: number): void;
+  }) {}
+
+  isDragging(): boolean { return this.drag?.active ?? false; }
+
   readonly position = { x: 0, y: 0 };
   readonly velocity = { x: 0, y: 0 };
   private viewportW = 1;
@@ -72,6 +80,15 @@ export class PointerSystem {
    * `near` 为 false 表示鼠标远离窗口，生命体可忽略。
    */
   ingest(x: number, y: number, near: boolean): void {
+    if (this.drag) {
+      const dx = x - this.drag.x;
+      const dy = y - this.drag.y;
+      if (this.drag.active || Math.hypot(dx, dy) >= 5) {
+        this.clearGestures();
+        this.drag = { x, y, active: true };
+        this.orbit?.move(dx, dy);
+      }
+    }
     this.inCanvas = near;
     const now = performance.now();
     const dt = this.lastTime > 0 ? Math.max((now - this.lastTime) / 1000, 1 / 240) : 1 / 60;
@@ -83,6 +100,10 @@ export class PointerSystem {
     const k = 0.35;
     this.velocity.x += ((x - prevX) / dt - this.velocity.x) * k;
     this.velocity.y += ((y - prevY) / dt - this.velocity.y) * k;
+    if (this.isDragging()) {
+      this.velocity.x = 0;
+      this.velocity.y = 0;
+    }
     this.lastX = x;
     this.lastY = y;
     this.lastTime = now;
@@ -96,6 +117,7 @@ export class PointerSystem {
     this.velocity.x = 0;
     this.velocity.y = 0;
     this.pressing = true;
+    this.drag = this.orbit?.hit(x, y) ? { x, y, active: false } : null;
     const now = performance.now();
     const nearDouble = (px: number, py: number, t: number) =>
       now - t < 300 && Math.hypot(x - px, y - py) < 48;
@@ -119,6 +141,7 @@ export class PointerSystem {
 
   /** 注入左键抬起。 */
   release(): void {
+    this.drag = null;
     this.pressing = false;
     // 抬起即放行单击涟漪：反馈要即时，双击由 press 侧拦截。
     this.flushClick();
@@ -154,6 +177,8 @@ export class PointerSystem {
   };
 
   private readonly onDown = (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    try { this.target?.setPointerCapture(event.pointerId); } catch { /* 合成输入没有活动指针。 */ }
     this.press(event.clientX, event.clientY, true);
   };
 
@@ -187,6 +212,7 @@ export class PointerSystem {
 
   /** 输入模式切换时丢弃旧手势，避免 DOM 与全局双击重复触发。 */
   clearGestures(): void {
+    this.drag = null;
     this.pressing = false;
     this.pendingClick = null;
     this.readyClick = null;
@@ -194,6 +220,10 @@ export class PointerSystem {
     this.doublePos = null;
     this.lastClickDone = null;
   }
+
+  private readonly onCaptureLost = () => { if (this.drag || this.pressing) this.clearGestures(); };
+
+  private readonly onCancel = () => { this.clearGestures(); };
 
   private readonly onLeave = () => {
     this.velocity.x = 0;
@@ -209,7 +239,9 @@ export class PointerSystem {
     target.addEventListener('pointerleave', this.onLeave);
     target.addEventListener('pointerdown', this.onDown);
     target.addEventListener('pointerup', this.onUp);
-    target.addEventListener('pointercancel', this.onUp);
+    target.addEventListener('pointercancel', this.onCancel);
+    target.addEventListener('lostpointercapture', this.onCaptureLost);
+    window.addEventListener('blur', this.onCancel);
     this.inCanvas = true;
   }
 
@@ -220,9 +252,11 @@ export class PointerSystem {
     this.target.removeEventListener('pointerleave', this.onLeave);
     this.target.removeEventListener('pointerdown', this.onDown);
     this.target.removeEventListener('pointerup', this.onUp);
-    this.target.removeEventListener('pointercancel', this.onUp);
+    this.target.removeEventListener('pointercancel', this.onCancel);
+    this.target.removeEventListener('lostpointercapture', this.onCaptureLost);
+    window.removeEventListener('blur', this.onCancel);
     this.target = null;
-    this.pressing = false;
+    this.clearGestures();
   }
 
   dispose(): void {
