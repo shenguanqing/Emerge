@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct CGPoint {
@@ -12,6 +13,7 @@ struct CGPoint {
     y: f64,
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn CGEventCreate(source: *const std::ffi::c_void) -> *mut std::ffi::c_void;
     fn CGEventGetLocation(event: *mut std::ffi::c_void) -> CGPoint;
@@ -19,6 +21,7 @@ unsafe extern "C" {
     fn CFRelease(cf: *const std::ffi::c_void);
 }
 
+#[cfg(target_os = "macos")]
 fn mouse_location() -> Option<(f64, f64)> {
     unsafe {
         let ev = CGEventCreate(std::ptr::null());
@@ -31,9 +34,22 @@ fn mouse_location() -> Option<(f64, f64)> {
     }
 }
 
+/// 非 macOS 暂无全局指针轮询实现：返回 None，跟踪线程空转等待；
+/// Windows 穿透与原生指针通道见 ROADMAP，尚未验证。
+#[cfg(not(target_os = "macos"))]
+fn mouse_location() -> Option<(f64, f64)> {
+    None
+}
+
+#[cfg(target_os = "macos")]
 fn left_down() -> bool {
     // kCGEventSourceStateCombinedSessionState = 0, kCGMouseButtonLeft = 0
     unsafe { CGEventSourceButtonState(0, 0) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn left_down() -> bool {
+    false
 }
 
 /// 用户是否开启了鼠标穿透（托盘切换）。
