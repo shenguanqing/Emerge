@@ -15,13 +15,13 @@
 
 WebGPU 不可用时切换 WebGL2。两者均不可用时显示明确的不支持提示。后端共享力场和参数语义，不承诺逐像素一致；不假设 WGSL 可以直接用于 WebGL2。
 
-桌面开发入口默认加载粒子界面，`scripts/app-dev.mjs` 限制 Cargo 并发为 1。仅显式 `--diagnostic` 暂停前端组件挂载；切换模式需要重启开发服务。渲染推进状态与故障历史见 [ROADMAP](ROADMAP.md#已知坑)。
+桌面开发入口默认加载粒子界面，直接使用 `pnpm tauri dev`。需隔离排障时显式设置 `VITE_EMERGE_DIAGNOSTIC=1` 暂停前端组件挂载；切换模式需要重启开发服务。渲染推进状态与故障历史见 [ROADMAP](ROADMAP.md#已知坑)。
 
 ## 视觉版本与桌面预算
 
 组织契约：中央环腔、横向传输束、三维径向支路与球面电路共用 30 条组织容量映射和 1.28 基础半径；不重新引入故障末轮撤销的片元共享 uniform 或独立核心高亮接口。桌面沿用 WebGL2、与 Web 相同的 100,000 粒子容量上限及成长/质量数量映射、按设备/质量档位上限取 DPR（High/Ultra 最高 2）和最高 30 FPS；WebGL2 非阻塞 fence 与 WebGPU 队列完成通知限制未完成帧，遇到上下文丢失或队列失败停止提交。质量管理接收实际帧率上限，桌面按 30 FPS 判定是否达标，不能把限帧误判成 GPU 性能不足而持续降档、放大点面积。core 仍独立于渲染平台。
 
-应用只有一份 `src` 源码与默认 Vite 配置，开发端口为 5173、构建产物为 `dist`。独立视觉预览副本和覆盖插件已移除。着色器接口回归与提交保护测试统一由 `npm run test:render` 执行；GLSL ES 要求跨阶段共享 uniform 的类型与精度一致，不得在单一阶段覆盖注入的默认精度。实际验证范围见 [ROADMAP](ROADMAP.md)，历史决策见 [CHANGELOG](../CHANGELOG.md)。
+应用只有一份 `src` 源码与默认 Vite 配置，开发端口为 1420、构建产物为 `dist`。独立视觉预览副本和覆盖插件已移除。着色器接口回归与提交保护测试统一由 `pnpm test:render` 执行；GLSL ES 要求跨阶段共享 uniform 的类型与精度一致，不得在单一阶段覆盖注入的默认精度。实际验证范围见 [ROADMAP](ROADMAP.md)，历史决策见 [CHANGELOG](../CHANGELOG.md)。
 
 ## 目录结构
 
@@ -109,6 +109,8 @@ src-tauri/
 
 ### 形态锚点与智体组织
 
+`panelPoint` 使用球面法向及两条正交切向构建局部浅弯电路片，归一化深度为 `1 − 0.22 × (x² + y²)`，以较平直的排线替代局部经纬投影。`fieldRotation` 为这些片区及原有球面路径提供同一倾斜变换。仅调整粒子力场目标及对应切线，不增加网格、贴图、uniform 或绘制调用；局部边角需保持在现有命中包络内。
+
 四阶段共享中央环腔、横向传输束、三维径向支路与球面电路，成长改变组织程度，保留 30% / 55% / 85% 阈值。`GrowthEngine` 的 24 个方向与 30 条组织容量保持存档语义，不增加粒子预算。
 
 `HologramField` 为 GLSL/WGSL 模拟与绘制提供同源锚点、路径、切线和信号。24 个 Fibonacci 球面片区分三层（归一化半径 0.40 / 0.69 / 0.98），每片七根纤维、三段折线；纬向转接与末端在真实路径上留出空隙。径向束和外伸矩形端口使用同一方向身份。18 条传输路径中 12 条横向延伸、6 条在核外回卷，连接核心与内层；核心为五层带暗心、缺口、偏心和轴向起伏的三维卷曲环腔。
@@ -132,7 +134,7 @@ WebGL2 保留两个 GPGPU pass，但先写新速度再写位置：`GPUComputatio
 
 ## 桌面与 Web
 
-macOS 打包配置单独放在 `src-tauri/tauri.macos.conf.json`，release 生成 `.app` 与 `.dmg`；`npm run app:dmg` 经 `scripts/app-dmg.mjs` 设置子进程 `CI=true` 与 `TAURI_BUNDLER_DMG_IGNORE_CI=false`，除 CLI 的 `--ci` 外显式跳过 Finder 装饰脚本，保留卷图标与 Applications 链接。两者的区别依据 [Tauri 2.12 bundler 源码](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.0/crates/tauri-bundler/src/bundle/macos/dmg/mod.rs)。`app:build` 保留 debug / no-bundle 语义。用途说明显式从 `Info.plist` 合并到应用包。构建产物位于 Cargo target 目录，不进入 Git；平台打包配置不放入 core。当前签名为 ad-hoc，公开分发签名与公证另行配置、验证。
+桌面打包配置收敛在 `src-tauri/tauri.conf.json` 单文件（`bundle.active` 为 true，`targets` 为 all，macOS 合并 `Info.plist` 用途说明、ad-hoc 签名与最低系统版本），release 生成 `.app` 与对应平台安装包；本地需要跳过 Finder 装饰脚本时显式设置 `CI=true` 再执行 `pnpm tauri build`（CLI 的 `--ci` 不会设置打包脚本检查的 `CI` 环境变量，`TAURI_BUNDLER_DMG_IGNORE_CI=false` 时保留卷图标与 Applications 链接）。两者的区别依据 [Tauri 2.12 bundler 源码](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.0/crates/tauri-bundler/src/bundle/macos/dmg/mod.rs)。`pnpm exec tauri build -- --debug --no-bundle` 保留 debug / no-bundle 语义。用途说明显式从 `Info.plist` 合并到应用包。构建产物位于 Cargo target 目录，不进入 Git；平台打包配置不放入 core。当前签名为 ad-hoc，公开分发签名与公证另行配置、验证。
 
 默认 Cargo 输出根为 `src-tauri/target/`；显式 `CARGO_TARGET_DIR` 可隔离一次构建，根目录下仍分别使用 `debug/` 和 `release/`。`target/dmg/release/` 是历史隔离打包输出，并非额外的固定打包层级。清理只移除可再生成且未被构建/运行占用的缓存，先停止编译监视服务以免自动重建；保留运行中的程序、挂载镜像与需保留的分发产物。辅助工具的源码统一放 `scripts/`；本地截图、日志、性能采样、代码差异副本和临时验收文件统一放 `output/`，按日期/场景分目录并由 Git 忽略，验证结论由 CHANGELOG 维护。清理过期中间文件时保留仍有验收价值的证据；动画帧清单等内部引用须一起核对，不能仅凭文件哈希重复删除。
 

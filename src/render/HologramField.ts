@@ -54,13 +54,28 @@ float hologramFilament(float seed) {
   if ((seed >= 0.16 && seed < 0.34) || (seed >= 0.50 && seed < 0.58) || (seed >= 0.74 && seed < 0.84)) { return 0.88; }
   return 0.80;
 }
-vec3 fieldPoint(float longitude, float latitude, float radius, float time) {
-  // 球层、节点与径向束共享倾斜自转轴，纬向短弧不能形成多组大环。
-  vec3 q = vec3(cos(longitude) * cos(latitude), sin(latitude), sin(longitude) * cos(latitude)) * radius;
+vec3 fieldRotation(float x, float y, float z, float time) {
+  vec3 q = vec3(x, y, z);
   float pitch = 0.22 + sin(time * 0.043) * 0.035;
   q = vec3(q.x, q.y * cos(pitch) - q.z * sin(pitch), q.y * sin(pitch) + q.z * cos(pitch));
   float roll = -0.10 + sin(time * 0.031) * 0.028;
   return vec3(q.x * cos(roll) - q.y * sin(roll), q.x * sin(roll) + q.y * cos(roll), q.z);
+}
+vec3 fieldPoint(float longitude, float latitude, float radius, float time) {
+  // 节点、径向束与电路片共用倾斜轴。
+  vec3 q = vec3(cos(longitude) * cos(latitude), sin(latitude), sin(longitude) * cos(latitude)) * radius;
+  return fieldRotation(q.x, q.y, q.z, time);
+}
+float panelDepth(float x, float y) {
+  // 浅弯曲面保留三维厚度，同时让局部直角不被经纬投影拉歪。
+  return 1.0 - 0.22 * (x * x + y * y);
+}
+vec3 panelPoint(float longitude, float latitude, float radius, float x, float y, float time) {
+  vec3 normal = vec3(cos(longitude) * cos(latitude), sin(latitude), sin(longitude) * cos(latitude));
+  vec3 right = vec3(-sin(longitude), 0.0, cos(longitude));
+  vec3 up = vec3(-cos(longitude) * sin(latitude), cos(latitude), -sin(longitude) * sin(latitude));
+  vec3 q = (normal * panelDepth(x, y) + right * x + up * y) * radius;
+  return fieldRotation(q.x, q.y, q.z, time);
 }
 vec3 corePoint(float time) { return vec3(sin(time * 0.13) * 0.008, cos(time * 0.11) * 0.008, 0.0); }
 float nodeLongitude(float node, float time) {
@@ -91,13 +106,11 @@ vec3 patchPoint(float node, float tier, float fiber, float along, float time, fl
   float pitch = 0.012 + hash1(node * 23.3) * 0.009;
   float y = fiber * pitch + routeY * (hash1(node * 3.3 + shard) - 0.35) * 0.16;
   float angle = floor(hash1(node * 29.3) * 4.0) * 1.5707963 + (tier - 1.0) * 0.12;
-  float latitude = nodeLatitude(node) + x * sin(angle) + y * cos(angle);
-  float longitude = nodeLongitude(node, time) + (x * cos(angle) - y * sin(angle)) / max(0.40, cos(nodeLatitude(node)));
-  longitude += (tier - 1.0) * 0.24;
-  latitude += (hash1(node * 43.1 + tier * 7.7) - 0.5) * 0.16;
+  float longitude = nodeLongitude(node, time) + (tier - 1.0) * 0.24;
+  float latitude = nodeLatitude(node) + (hash1(node * 43.1 + tier * 7.7) - 0.5) * 0.16;
   float radius = 0.40 + tier * 0.29 + (hash1(node * 17.3) - 0.5) * 0.06;
   radius += (hash1(node * 5.3 + shard) - 0.5) * 0.028 + floor((fiber + 3.0) / 3.0) * 0.010;
-  return fieldPoint(longitude, latitude, radius, time);
+  return panelPoint(longitude, latitude, radius, x * cos(angle) - y * sin(angle), x * sin(angle) + y * cos(angle), time);
 }
 float orbitLongitude(float lane, float local, float time, float growth) {
   float shard = floor(local * 3.0);
@@ -177,10 +190,20 @@ vec3 channelPoint(float node, float along, float time, float growth) {
 vec3 streamPoint(float stream, float along, float time, float growth, float arcStrength) {
   float shard = floor(along * 3.0);
   float local = fract(along * 3.0);
-  float angle = -0.40 + shard * 2.05 + local * 1.35 + time * 0.075;
-  float radius = 1.06 + stream * 0.018;
+  float ringA = 1.0 - step(0.5, stream);
+  float ringB = step(0.5, stream) * (1.0 - step(1.5, stream));
+  float ringAny = ringA + ringB;
+  // B 环反向环行，两环转速不同。
+  float angle = -0.40 + shard * 2.05 + local * 1.35 + time * 0.075 * (1.0 - 2.0 * ringB);
+  // 双斜穿大环：A 环半径约 1.30，B 环约 1.18，都带起伏与轻微离面；其余保持外缘尘流。
+  float wob = (hash1(stream * 7.7 + shard * 3.1) - 0.5) * 0.22 + sin(time * 0.11 + shard * 2.4) * 0.04;
+  float radius = mix(1.06 + stream * 0.018, mix(1.12, 1.22, ringA) * (1.0 + wob), ringAny);
   vec3 q = vec3(cos(angle) * radius, sin(angle) * radius, (stream - 1.5) * 0.025);
-  return vec3(q.x * 0.84 + q.z * 0.54, q.y, -q.x * 0.54 + q.z * 0.84);
+  q = vec3(q.x * 0.84 + q.z * 0.54, q.y, -q.x * 0.54 + q.z * 0.84);
+  // 大环轻微离面，不再是完美平面圆。
+  q.z += ringAny * (hash1(shard * 5.3 + stream * 1.7) - 0.5) * 0.09;
+  float tilt2 = ringA * 0.52 + ringB * -0.38;
+  return vec3(q.x * cos(tilt2) - q.y * sin(tilt2), q.x * sin(tilt2) + q.y * cos(tilt2), q.z);
 }
 vec3 ribbonPoint(float seed, float sr, float time, float growth) {
   // 穿过核心的横向传输线束，分束、错位端点和矩形转接；不是发光螺旋面。
@@ -366,7 +389,7 @@ vec3 hologramAnchor(float seed, float time, float growth, float arcStrength) {
   // 少量颗粒周期性脱离球层/环带再回流（不含径向束与核心）。
   float roamer = step(0.995, hash1(seed * 331.7)) * step(0.16, seed) * (1.0 - step(0.58, seed) * (1.0 - step(0.74, seed)));
   float cycle = fract(time * 0.07 + hash1(seed * 17.9));
-  float excursion = pow(sin(cycle * 3.1415927), 2.0) * (0.05 + 0.16 * hash1(seed * 23.3));
+  float excursion = pow(sin(cycle * 3.1415927), 2.0) * (0.05 + 0.22 * hash1(seed * 23.3));
   q += normalize(q + vec3(0.00001)) * excursion * roamer * g;
   vec3 drift = vec3(sin(q.y * 3.2 + time * 0.43), sin(q.z * 4.1 - time * 0.31), cos(q.x * 3.7 + time * 0.29));
   q += drift * (0.004 + 0.010 * (1.0 - g));
@@ -393,10 +416,19 @@ float hologramFocus(float depth) {
 float hologramLineScale(float seed) {
   if (seed < 0.07) { return 1.0; }
   if (seed < 0.16) { return 1.05; }
+  if (seed >= 0.96) {
+    // 双大环粒芯加宽约一倍，其余外缘流保持细丝。
+    float stream = floor(hash1(seed * 83.1) * 4.0);
+    float ring = (1.0 - step(1.5, stream));
+    return mix(mix(0.70, 1.16, 1.0 - step(0.5, abs(floor(hash1(seed * 89.7) * 7.0) - 3.0))), 2.0, ring);
+  }
   if (seed >= 0.90 && seed < 0.96) { return 0.48; }
   if (seed >= 0.50 && seed < 0.58) { return 0.58; }
   if (seed >= 0.84 && seed < 0.90) { return 0.82; }
-  if (seed >= 0.34 && seed < 0.50) { return 0.72; }
+  if (seed >= 0.34 && seed < 0.50) {
+    float hw = step(0.75, hash1(seed * 51.3));
+    return mix(0.72, 1.9, hw);
+  }
   float trunk = 1.0 - step(0.5, abs(floor(hash1(seed * 89.7) * 7.0) - 3.0));
   return mix(0.70, 1.16, trunk);
 }
@@ -414,18 +446,21 @@ float hologramCoverage(float seed) {
   float size = hologramLineScale(seed);
   return clamp(hologramAspect(seed) / (7.0 * size * size), 0.65, 2.2);
 }
-float hologramExposureBase(float seed, float growth) {
+float hologramExposureBase(float seed, float growth, float music) {
   if (seed < 0.07) { return 0.86; }
   if (seed < 0.16) { return 0.48; }
   if (seed < 0.34) { return 0.30 + smoothstep(0.10, 0.78, growth) * (0.70 + hash1(neuralIdentity(seed) * 53.1) * 0.45); }
   if (seed < 0.50) {
     float capacity = smoothstep(orbitIdentity(seed), orbitIdentity(seed) + 1.0, orbitCapacity(growth));
-    return 0.035 + capacity * smoothstep(0.28, 0.86, growth) * 0.335;
+    // 主干弧：约四分之一轨道高亮加宽，其余保持细丝暗弧。
+    float hw = step(0.75, hash1(seed * 51.3));
+    return 0.035 + capacity * smoothstep(0.28, 0.86, growth) * (0.335 + hw * 0.85);
   }
   if (seed < 0.58) { return 0.35 + smoothstep(0.15, 0.65, growth) * 0.62; }
   if (seed < 0.74) {
-    float trunk = pow(hash1(channelIdentity(seed) * 11.1), 3.0);
-    return 0.15 + smoothstep(0.16, 0.88, growth) * (0.12 + trunk * 0.95);
+    // 辐条扇：少数高亮、多数暗淡，亮束如折扇自核心区放射。
+    float trunk = pow(hash1(channelIdentity(seed) * 11.1), 4.0);
+    return 0.15 + smoothstep(0.16, 0.88, growth) * (0.12 + trunk * 1.15);
   }
   if (seed < 0.84) { return 0.28 + smoothstep(0.18, 0.72, growth) * 0.82; }
   if (seed < 0.90) {
@@ -433,24 +468,38 @@ float hologramExposureBase(float seed, float growth) {
     return 0.10 + smoothstep(0.45, 0.94, growth) * (0.60 + terminal * 0.55);
   }
   if (seed < 0.96) { return 0.32 + smoothstep(0.15, 0.72, growth) * 0.75; }
-  return 0.06 + smoothstep(0.38, 0.94, growth) * 0.12;
+  // 外缘流第 0、1 条为双斜穿大环：成熟期才点亮，其余两条保持低亮尘流。
+  float stream = floor(hash1(seed * 83.1) * 4.0);
+  float ring = (1.0 - step(1.5, stream));
+  float dim = 0.06 + smoothstep(0.38, 0.94, growth) * 0.12;
+  // 大环每段亮度不同，破完美均匀。
+  float shard = floor(pathwayPosition(seed) * 3.0);
+  float shardVar = 0.65 + 0.70 * hash1(shard * 9.1 + stream * 3.3);
+  // 双斜穿大环随音乐高频起伏（Matt Ebb 原话 rings animate differently；无音乐时 music 为 0）。
+  // 大环带电路纹理：焊点式明暗段，非光滑线圈。
+  float pads = 0.55 + 0.45 * step(0.40, fract(pathwayPosition(seed) * 28.0 + stream * 7.0));
+  float mature = smoothstep(0.55, 0.95, growth);
+  float bright = (0.30 + mature * 0.85) * shardVar * pads + ring * music * 0.55 * mature;
+  return mix(dim, bright, ring);
 }
-float hologramExposure(float seed, float growth) {
+float hologramExposure(float seed, float growth, float music) {
   float alive = 1.0;
   if ((seed >= 0.16 && seed < 0.34) || (seed >= 0.50 && seed < 0.58) || (seed >= 0.74 && seed < 0.84) || (seed >= 0.90 && seed < 0.96)) {
     float patchId = neuralIdentity(seed);
     float blk = floor(pathwayPosition(seed) * 36.0);
     float fiber = floor(hash1(seed * 89.7) * 7.0);
     float trunk = 1.0 - step(0.5, abs(fiber - 3.0));
-    alive = (0.52 + 0.70 * pow(hash1(patchId * 3.7 + floor(blk / 4.0) * 5.9), 2.0)) * (0.76 + trunk * 0.70);
+    // JARVIS 对比：亮斑更高、基底更暗，峰值段更突出，暗隙更沉。
+    alive = (0.44 + 0.85 * pow(hash1(patchId * 3.7 + floor(blk / 4.0) * 5.9), 2.0)) * (0.76 + trunk * 0.70);
   }
-  return hologramExposureBase(seed, growth) * alive;
+  return hologramExposureBase(seed, growth, music) * alive;
 }
 float hologramHeat(float seed, float time, float growth) {
   float warm = smoothstep(0.25, 0.95, growth);
   if (seed < 0.07) {
     float heat = hash1(seed * 207.1);
-    return (0.10 + heat * 0.25 + step(0.80, heat) * 0.25) * warm;
+    // JARVIS 核心结：峰值更高、基底更暗，峰底比拉开，白金热点集中。
+    return (0.06 + heat * 0.22 + step(0.80, heat) * 0.42) * warm;
   }
   if (seed < 0.16) { return 0.06 * warm; }
   if (seed >= 0.58 && seed < 0.74) {
@@ -477,7 +526,16 @@ float hologramHalo(float seed, float time, float growth) {
   }
   if (seed >= 0.58 && seed < 0.74) {
     float along = pathwayPosition(seed);
-    return selectHotspot * pathwayPacket(channelIdentity(seed), along, time) * 0.60 * smoothstep(0.25, 0.95, growth);
+    float packets = selectHotspot * pathwayPacket(channelIdentity(seed), along, time) * 0.60;
+    // 束上节点：少量静态亮结点缀长束。
+    float knots = step(0.975, hash1(seed * 311.7)) * 0.55;
+    return (packets + knots) * smoothstep(0.25, 0.95, growth);
+  }
+  if (seed >= 0.96) {
+    float stream = floor(hash1(seed * 83.1) * 4.0);
+    float ring = (1.0 - step(1.5, stream));
+    float base = selectHotspot * mainRingWeight(seed) * 0.42 * smoothstep(0.38, 0.95, growth);
+    return base + ring * 0.35 * smoothstep(0.55, 0.95, growth);
   }
   return selectHotspot * mainRingWeight(seed) * 0.42 * smoothstep(0.38, 0.95, growth);
 }

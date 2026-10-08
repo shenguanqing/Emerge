@@ -1,5 +1,5 @@
 // 核心逻辑测试：确定性随机、持久化往返、成长单调、昼夜相位。
-// 运行：npm run test:core
+// 运行：pnpm test:core
 import test from 'node:test';
 import { LifeEngine } from './LifeEngine';
 import { createLifeState, DEFAULT_LIFE_PARAMS } from './types';

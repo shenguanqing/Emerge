@@ -66,8 +66,12 @@ const moodLabel = computed(() => {
   const s = props.state;
   if (!s) return '—';
   if (s.scared > 0.55) return t('diag.mood.scared');
+  if (s.excited > 0.55) return t('diag.mood.excited');
+  if (s.playful > 0.55) return t('diag.mood.playful');
   if (s.curious > 0.55) return t('diag.mood.curious');
-  if (s.sleepiness > 0.6) return t('diag.mood.sleepy');
+  if (s.sleepy > 0.55) return t('diag.mood.sleepy');
+  if (s.lonely > 0.55) return t('diag.mood.lonely');
+  if (s.explore > 0.55) return t('diag.mood.explore');
   if (s.calm > 0.6) return t('diag.mood.calm');
   return t('diag.mood.alert');
 });

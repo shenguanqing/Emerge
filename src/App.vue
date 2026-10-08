@@ -811,7 +811,14 @@ onMounted(async () => {
       // 状态显示：连续权重的主导项，非互斥切换。
       const st = lifeEngine.getState();
       diag.mood =
-        st.scared > 0.45 ? t('diag.mood.scared') : st.curious > 0.45 ? t('diag.mood.curious') : st.contract > 0.2 ? t('diag.mood.alert') : t('diag.mood.calm');
+        st.scared > 0.45 ? t('diag.mood.scared')
+          : st.excited > 0.55 ? t('diag.mood.excited')
+            : st.playful > 0.55 ? t('diag.mood.playful')
+              : st.curious > 0.45 ? t('diag.mood.curious')
+                : st.sleepy > 0.55 ? t('diag.mood.sleepy')
+                  : st.lonely > 0.55 ? t('diag.mood.lonely')
+                    : st.explore > 0.55 ? t('diag.mood.explore')
+                      : st.contract > 0.2 ? t('diag.mood.alert') : t('diag.mood.calm');
       const appearance = qualityAppearance(quality.tier, st.growth);
       diag.particles = appearance.count;
       activeBackend.setActiveCount(diag.particles);

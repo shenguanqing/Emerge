@@ -353,7 +353,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   result.alpha = reveal * mix(0.65, 1.0, r.data2.x) * mix(0.46, 0.62, filament) * depthLayer;
   result.alpha *= (1.0 - isFrag * 0.30) * (1.0 - bokeh * 0.70);
   result.alpha *= select(1.0, select(0.55, 0.70, seed < 0.07), layer < 0.5);
-  result.alpha *= hologramExposure(seed, r.data4.y) * mix(1.0, hologramCoverage(seed), routed);
+  result.alpha *= hologramExposure(seed, r.data4.y, r.data4.z) * mix(1.0, hologramCoverage(seed), routed);
   result.alpha *= mix(1.0, 0.70, nearSide * nearSide);
   result.glowBoost = (0.75 + 0.40 * hash1(seed * 91.7 + 2.1)) * (1.0 + r.data3.y * 0.12 + r.data3.z * 0.06 * tw);
   result.glowBoost *= hologramSignal(seed, r.data3.w, r.data4.y);

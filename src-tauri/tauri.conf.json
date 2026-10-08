@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.shenguanqing.emerge",
   "build": {
-    "frontendDist": "../dist",
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
@@ -37,10 +37,19 @@
     "withGlobalTauri": true
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "macOS": {
       "signingIdentity": "-",
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "infoPlist": "Info.plist"
     }
   }
 }

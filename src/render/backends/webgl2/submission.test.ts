@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { WebGL2Backend } from './WebGL2Backend';
 import { createLifeState } from '../../../core/types';
 
@@ -33,4 +34,20 @@ test('WebGL 上下文丢失立即停止', () => {
     renderer: { getContext: () => ({ isContextLost: () => true }) },
   }) as WebGL2Backend;
   backend.frame(createLifeState(), 1 / 30);
+});
+
+test('顶点/片元着色器只引用已声明的 uniform（Pass 10 花屏回归）', () => {
+  // 单元测试不编译 GLSL；未声明标识曾导致桌面 WebGL2 直接花屏，此测试堵住该类别。
+  const src = readFileSync('src/render/backends/webgl2/WebGL2Backend.ts', 'utf8');
+  for (const name of ['POINTS_VERT', 'POINTS_FRAG']) {
+    const match = src.match(new RegExp(`const ${name} = /\\* glsl \\*/ \`([\\s\\S]*?)\`;`));
+    assert.ok(match, `${name} 源码块存在`);
+    const declared = new Set(
+      [...match[1].matchAll(/uniform\s+(?:float|int|vec2|vec3|vec4|sampler2D)\s+(\w+)\s*(?:\[.+?\])?\s*;/g)]
+        .map((m) => m[1]),
+    );
+    for (const use of match[1].matchAll(/\bu[A-Z]\w*/g)) {
+      assert.ok(declared.has(use[0]), `${name}: ${use[0]} 未声明`);
+    }
+  }
 });

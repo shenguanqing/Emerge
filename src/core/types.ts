@@ -152,6 +152,16 @@ export interface LifeState {
   curious: number;
   scared: number;
   calm: number;
+  /** 自主探索 0..1（无指针 + 活跃时漫游扩大）。 */
+  explore: number;
+  /** 兴奋 0..1（高能量/新刺激时跟随更快、更敢靠近）。 */
+  excited: number;
+  /** 困倦 0..1（现实昼夜驱动；动作收敛、响应变迟）。 */
+  sleepy: number;
+  /** 嬉戏 0..1（信任 + 温和互动时更灵更快）。 */
+  playful: number;
+  /** 孤独 0..1（长时间无互动时内收、变迟）。 */
+  lonely: number;
   /** 受惊收缩 0..1（身体锚点收缩）。 */
   contract: number;
   /** 情绪色偏 0..1（平静冷 ↔ 活跃暖），克制幅度。 */
@@ -215,6 +225,11 @@ export function createLifeState(): LifeState {
     curious: 0,
     scared: 0,
     calm: 1,
+    explore: 0,
+    excited: 0,
+    sleepy: 0,
+    playful: 0,
+    lonely: 0,
     contract: 0,
     moodShift: 0.5,
     pointerPushMul: 1,

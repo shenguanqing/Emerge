@@ -306,6 +306,7 @@ uniform float uContemplation;
 uniform float uEnergy;
 uniform float uPulseBoost;
 uniform float uGrowth;
+uniform float uMusicTreble;
 attribute float aRef;
 varying float vGlow;
 varying float vAlpha;
@@ -381,7 +382,7 @@ void main() {
   vAlpha = reveal * mix(0.65, 1.0, uFormMix) * mix(0.46, 0.62, vFilament) * depthLayer;
   vAlpha *= (1.0 - isFrag * 0.30) * (1.0 - bokeh * 0.70);
   if (layer < 0.5) { vAlpha *= seed < 0.07 ? 0.70 : 0.55; }
-  vAlpha *= hologramExposure(seed, uGrowth) * mix(1.0, hologramCoverage(seed), routed);
+  vAlpha *= hologramExposure(seed, uGrowth, uMusicTreble) * mix(1.0, hologramCoverage(seed), routed);
   vAlpha *= mix(1.0, 0.70, nearSide * nearSide);
   vSpark = (0.75 + 0.40 * hash1(seed * 91.7 + 2.1)) * (1.0 + uPulseBoost * 0.12 + uEnergy * 0.06 * tw);
   vSpark *= hologramSignal(seed, uTime, uGrowth);
@@ -596,6 +597,7 @@ export class WebGL2Backend {
         uThoughtPhase: { value: 0 }, uThoughtPulse: { value: 0 }, uContemplation: { value: 0 },
         uEnergy: { value: params.energyBase },
         uPulseBoost: { value: 0 },
+        uMusicTreble: { value: 0 },
         uCoreCol: { value: new THREE.Vector3(1.0, 0.95, 0.82) },
         uBodyCol: { value: new THREE.Vector3(0.88, 0.68, 0.32) },
         uAuraCol: { value: new THREE.Vector3(0.58, 0.42, 0.18) },
@@ -724,6 +726,7 @@ export class WebGL2Backend {
     m.uRenderRadius.value = this.sim.bodyBase * state.breathScale;
     m.uEnergy.value = state.energy;
     m.uPulseBoost.value = state.pulseBoost;
+    m.uMusicTreble.value = state.musicTreble * (state.musicActive > 0.5 ? 1 : 0);
     m.uBrightness.value = state.brightness * this.brightnessScale * Math.min(1, Math.pow(this.sim.bodyBase / BODY_BASE_RADIUS, 1.8));
     m.uTreble.value = state.musicTreble;
     m.uGrowth.value = state.growth;

@@ -210,7 +210,10 @@ export class LifeEngine {
       this.home[1] + Math.sin(t * 1.1 + 1.3) * r * 0.6,
       this.home[2] + Math.cos(t * 0.9) * r * 0.4,
     ];
-    const behavior = this.behavior.update(dt, em, perceived, driftPos, this.params.driftSpeed);
+    const behavior = this.behavior.update(dt, em, perceived, driftPos, this.params.driftSpeed, {
+      arousal: Math.max(this.emotion.pulseLevel, this.clickPulse, this.pressRamp),
+      sleepiness: this.sleepiness,
+    });
     this.state.corePosition = this.positionLocked
       ? ([...this.home] as [number, number, number])
       : behavior.coreTarget;
@@ -219,6 +222,11 @@ export class LifeEngine {
     this.state.curious = Math.min(1, behavior.curious + (this.memory?.trustBonus ?? 0) * this.state.pointerActive);
     this.state.scared = behavior.scared;
     this.state.calm = behavior.calm;
+    this.state.explore = behavior.explore;
+    this.state.excited = behavior.excited;
+    this.state.sleepy = behavior.sleepy;
+    this.state.playful = behavior.playful;
+    this.state.lonely = behavior.lonely;
     this.state.contract = behavior.contract;
     this.state.moodShift = em.mood;
     this.state.pointerPushMul = behavior.pointerPushMul * (1 - (this.memory?.trustBonus ?? 0) * 0.4);

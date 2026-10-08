@@ -43,6 +43,28 @@ useSettingsSync((patch) => {
 });
 const windowError = ref('');
 
+/** 开机自启：以系统登录项为唯一真相源，不进 AppSettings 持久化；仅桌面设置窗读写。 */
+const autostart = ref(false);
+const autostartError = ref('');
+async function refreshAutostart(): Promise<void> {
+  if (!isDesktop) return;
+  try {
+    autostart.value = await invoke<boolean>('plugin:autostart|is_enabled');
+    autostartError.value = '';
+  } catch (error) { autostartError.value = String(error); }
+}
+async function onAutostartChange(): Promise<void> {
+  if (!isDesktop) return;
+  const next = autostart.value;
+  try {
+    await invoke(next ? 'plugin:autostart|enable' : 'plugin:autostart|disable');
+    autostartError.value = '';
+  } catch (error) {
+    autostart.value = !next;
+    autostartError.value = String(error);
+  }
+}
+
 /** 界面主题：auto 跟随系统，可手动切 light / dark；Web 端无存储时默认深色（与主画面一致），桌面保持 auto。 */
 type ThemeMode = 'auto' | 'light' | 'dark';
 function readStoredTheme(): ThemeMode {
@@ -276,6 +298,7 @@ function onClockStorage(event: StorageEvent): void {
 }
 
 onMounted(() => {
+  void refreshAutostart();
   void listenNative<ClockStatePayload>('clock-state', receiveClock).then((un) => {
     if (disposed) un(); else unlistens.push(un);
   });
@@ -585,6 +608,24 @@ const accentStyle = usePaletteAccent(s, () => themeMode.value);
         <label id="select-theme-label" for="select-theme">{{ t('theme.label') }}</label>
         <SelectControl id="select-theme" v-model="selectedTheme" :options="themeOptions" />
       </div>
+      <div v-if="isDesktop" class="toggle-row">
+        <div class="toggle-copy">
+          <strong>{{ t('general.autostart') }}</strong>
+          <em>{{ t('general.autostartDesc') }}</em>
+        </div>
+        <input
+          id="toggle-autostart"
+          v-model="autostart"
+          type="checkbox"
+          role="switch"
+          class="switch"
+          :aria-label="t('general.autostart')"
+          @change="onAutostartChange"
+        />
+      </div>
+      <p v-if="isDesktop && autostartError" role="alert" class="note error">
+        <span aria-hidden="true">⚠</span> {{ autostartError }}
+      </p>
       <div class="actions-row general-actions">
         <button type="button" class="btn-outline" @click="replayWelcome">{{ t('welcome.replay') }}</button>
         <button type="button" class="btn-text" :class="{ armed: confirmDefaults }" @click="reset">

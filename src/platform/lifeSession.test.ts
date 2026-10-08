@@ -29,7 +29,7 @@ test('debug 与现有预览参数均复制存档，写入和删除不改变真�
 test('重置预览重新诞生但保留调试/后端参数与真实存档', () => {
   const persisted = new MemoryStorage();
   persisted.setItem(STORAGE_KEY, 'real-life');
-  const href = freshPreviewUrl('http://localhost:5173/?debug=1&backend=webgl2&offline=4320');
+  const href = freshPreviewUrl('http://localhost:1420/?debug=1&backend=webgl2&offline=4320');
   const url = new URL(href);
   assert.equal(url.searchParams.get('debug'), '1');
   assert.equal(url.searchParams.get('backend'), 'webgl2');

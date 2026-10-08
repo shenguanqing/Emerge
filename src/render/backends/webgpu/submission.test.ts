@@ -58,6 +58,20 @@ function scalarField(name: string): (...values: number[]) => number {
   return (...values) => evaluate(...values, Math.floor, Math.min, fract, Math.sin, hash1);
 }
 
+test('浅弯电路片保持壳层厚度，边角不会反折或越出主体包络', () => {
+  const depth = scalarField('panelDepth');
+  for (let ix = -70; ix <= 70; ix++) {
+    for (let iy = -30; iy <= 30; iy++) {
+      const x = ix / 100;
+      const y = iy / 100;
+      const z = depth(x, y);
+      assert.ok(Number.isFinite(z) && z > 0.85 && z <= 1);
+      assert.ok(Math.hypot(x, y, z) < 1.2, '切向片区仍在原有主体命中包络内');
+      assert.equal(z, depth(-x, -y));
+    }
+  }
+});
+
 test('数据弧末端错开，但成长不改变相位，各丝共用同一流动速度', () => {
   const longitude = scalarField('orbitLongitude');
   for (const along of [0.1, 0.42, 0.81]) {

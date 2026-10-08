@@ -4,6 +4,54 @@
 
 ## [Unreleased]
 
+### 2026-10-08
+
+#### Added
+
+- 行为五态：BehaviorEngine 新增 Explore / Excited / Sleepy / Playful / Lonely lagged 权重（驱动见 VISUAL_INTERACTION），只经核心目标/收缩/排斥/跟随速度表达，不新增渲染 uniform；LifeState 新增五权重字段，运行状态与观察空间情绪标签扩展（四语）；lonely 计时起点 3 分钟、满权重约 15 分钟，可调。新增 6 项单测（可达/消退/无跳变/有界/计时重置/零步长），核心 47 项全过。真机可感知验收尚未做，ROADMAP 原条目不勾选。
+- 设置「通用」新增开机自启开关（仅桌面）：对标 BugScurry，经 `tauri-plugin-autostart`（LaunchAgent）读写系统登录项，不进生命存档；四语词条同步。
+- 新增 BugScurry 同款 CI 流水线（`.github/workflows/ci.yml`）：前端类型检查与全部自动化测试通过后，分别在 Windows 与 macOS 构建 Tauri 安装包并上传产物；打标签 `v*` 时自动创建 GitHub Release 并附安装包。
+
+#### Changed
+
+- 工具链向 BugScurry 对齐：包管理器由 npm 迁到 pnpm（`pnpm install`，`package-lock.json` 改为 `pnpm-lock.yaml`），开发端口由 5173 改为 1420，`src-tauri/tauri.conf.json` 收敛为单文件（`bundle.active` 为 true、`targets` 为 all，合并 `Info.plist` 用途说明与图标），Vite 增加 `clearScreen: false`、`TAURI_DEV_HOST` 主机/HMR 与 `src-tauri` 监听忽略；移除 `scripts/app-dev.mjs`、`scripts/app-dmg.mjs` 与 `src-tauri/tauri.macos.conf.json`，桌面入口统一为 `pnpm tauri dev` / `pnpm tauri build`，排障隔离改用 `VITE_EMERGE_DIAGNOSTIC=1` 环境变量、本地跳过 DMG 装饰改用 `CI=true`，README、ARCHITECTURE 与 ROADMAP 完成定义同步更新。
+
+- 完整体局部电路片改用球面切向的浅弯坐标，减少经纬曲面把直角和排线边缘拉弯的现象；三层空间组织、数据弧、核心、成长门控与十万粒子容量保留。模拟与绘制仍消费同源路径，所有可见结构继续由 GPU 粒子构成。
+
+- JARVIS 趋近 Pass 1：核心结 heat 曲线峰底比拉开（基底 0.10→0.06、顶档 0.60→0.70），只改共享片元函数，双后端同源、无接口变化；渲染 15 项回归与类型检查通过。Web 双后端截图对照待用户目视，桌面背板另行人眼确认。
+
+- JARVIS 趋近 Pass 2：片区亮斑 alive 调制峰值更高、基底更暗（0.52+0.70→0.44+0.85），对标静帧白热段与沉暗隙；几何与接口不动，渲染 15 项回归与类型检查通过。新截图待用户目视。
+
+- JARVIS 趋近 Pass 3：点亮斜穿大环——外缘流第 0 条（半径约 1.06 倾斜面，既有 streamPoint 几何）在成熟期提亮并加光晕，其余三条保持低亮；无新缓冲、无接口变化，有行进亮包伴随。渲染 15 项回归与类型检查通过。截图对照：环出现但半径只大 6% 贴壳，读成普通弧。
+
+- JARVIS 趋近 Pass 4：大环半径推到约 1.30 并在屏面内斜切约 0.52 弧度，形成斜穿球体的亮椭圆；三段断口保留。渲染 15 项回归与类型检查通过。截图对照待用户目视。
+
+- JARVIS 趋近 Pass 5（环去规整 + 体不规则演化）：大环半径加抖动（±5% + 慢时变）、粒芯加宽约三成、每段亮度差异；漫游粒子 excursion 上限 0.21→0.27（相位打散，不引入同步呼吸）。渲染 15 项回归与类型检查通过。截图对照：环仍偏细、偏圆。
+
+- JARVIS 趋近 Pass 6（环手造感）：大环半径起伏加大到 ±11%（+慢时变）并轻微离面，粒芯加宽约一倍，每段亮度差拉大（0.80+0.40→0.65+0.70）。渲染 15 项回归与类型检查通过。截图对照待用户目视。
+
+- JARVIS 趋近 Pass 7（双环）：外缘流第 1 条同步点亮为第二斜穿环（半径约 1.18、反向环行、反向斜切），对标“weird rings rotating around him”；第 2、3 条保持低亮。实现中发现回归 harness 不支持 GLSL max()，改用互斥相加表达。渲染 15 项回归与类型检查通过。截图对照待用户目视。
+
+- JARVIS 趋近 Pass 8（主干弧层级）：轨道弧约四分之一子集提为又宽又亮的主干（lineScale 0.72→1.9、曝光叠加，宽亮同源 hash），对标静帧横扫球体的粗亮带；其余轨道保持细丝暗弧。渲染 15 项回归与类型检查通过。截图对照待用户目视。
+
+- JARVIS 趋近 Pass 9（辐条扇 + 束上节点）：用户 73 帧解说视频对照（本地 output/jarvis-frames-2026-10-08，不入库）：辐条如折扇自核心区放射、束上串着亮结。径向束亮度分布收紧（pow3→pow4，顶档 0.95→1.15），束上加少量静态亮结。渲染 15 项回归与类型检查通过。截图对照待用户目视。
+
+- JARVIS 趋近 Pass 10（音频律动环）：双斜穿大环亮度跟随音乐高频起伏（对标 Matt Ebb rings animate differently；无音乐时输入为 0，形态不变）。`hologramExposure(Base)` 加 music 入参，双后端调用点同语义接入（WebGPU r.data4.z / WebGL2 uMusicTreble，均为门控后值），WGSL 转换校验通过。79 项全回归与类型检查通过。验证需播放音乐后观察，不可用静默状态代替。
+
+- JARVIS 趋近 Pass 11（环带电路化）：用户新官方正脸指正——官方“环”是布满电路纹理的带（层叠矩形板堆 + 垂落电路带），不是几何线。双环半径收拢贴壳（1.30/1.18→1.22/1.12），环带加焊点式明暗段。渲染回归与类型检查通过。截图对照待用户目视。
+
+#### Fixed
+
+- 桌面 WebGL2 花屏：Pass 10 在渲染顶点着色器引用了只在计算着色器声明过的 `uMusicTreble`，编译失败所致。已补顶点声明 + 逐帧赋值（门控后值）；新增回归测试断言顶点/片元着色器只引用已声明 uniform（已验证能抓出本次缺失）。教训：Web 预览走 WebGPU 通道所以没暴露，桌面走 WebGL2，着色器编译不在任何自动化覆盖内。
+
+#### Verified
+
+- 开机自启开关验证：`pnpm typecheck`、73 项前端测试（含四语新增词条）、`cargo check`（新 crate）通过；debug 包内设置「通用」拨动开/关有效，关闭后 `~/Library/LaunchAgents` 无残留。登录后实际自启、Windows 与卸载残留仍未验证，ROADMAP 项保持未勾选。
+- macOS 原生首验（debug .app，MacBookPro18,3 / M1 Pro / 16 GB / macOS 15.8.1）：包结构、Info.plist 用途说明、ad-hoc 签名（codesign --verify --deep --strict）通过；应用可启动运行约 7 分钟，主进程 CPU 6–11%、RSS ~100MB 平稳（`output/soak-2026-10-08.jsonl`，不含 WebKit/GPU 进程）。作者 5 分钟 verdict 原文：挂着当桌面宠物还行，三个阶段有点 boring，托盘/设置/退出都没问题，并提出设置加开机自启。MVP 五分钟门槛未算通过（未明确愿意主动继续玩，注意/惊吓/恢复感知未确认）。另发现本机 `screencapture`（带/不带 `-x`）拍不到该透明覆盖窗，三张截图只有壁纸，桌面视觉证据只能靠人眼，原因未查。详情 `output/acceptance-2026-10-08/checklist.md`；虚拟桌面/休眠恢复/Windows/release DMG 安装仍未验证。
+- 工具链迁移验证通过：`pnpm typecheck`、`pnpm test`（核心/平台/输入含音频/四语/渲染全套件）、`pnpm build`（vue-tsc + vite，72 模块，dist 正常产出）与 `pnpm tauri --version`（tauri-cli 2.12.0）；依赖经 `pnpm import` 锁定回原 npm 记录版本（typescript 5.6.3 / vue-tsc 2.1.10 / vite 8.3.1），避免浮动升级引入类型回归。环境：darwin / Node 22.22.0 / pnpm 9.15.9。未验证：`pnpm tauri dev` 真机桌面运行、release DMG 打包与全新安装/首次启动、Windows 实机、CI 流水线实际跑通。
+- 构建、15 项渲染检查（接口 2 + 后端 13）与差异空白检查通过；新增浅弯深度、边角包络及正反坐标一致性的数值回归。
+- macOS 15.8.1 / MacBookPro18,3 / M1 Pro / 16 GB / Codex 内置浏览器（版本未读取）/ apple metal-3：实际 WebGPU 成熟正面及拖动旋转、WebGL2 45% 和成熟正面短时观察无控制台错误/警告。初始 1280×720 后自动切为 458×769 CSS px，DPR 2；成熟两后端读到 High 88,474 粒子，45% 读到 High 58,737。闲置限帧不作为性能基线。截图、构建日志和代码差异在 `output/reference-2026-10-08/`；未进行原生透明桌面、全成长曲线及长期稳定性验收。
+
 ### 2026-10-05
 
 #### Added
